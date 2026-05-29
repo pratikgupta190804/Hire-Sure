@@ -243,6 +243,90 @@ async def bulk_generate(request: GenerateRequest, background_tasks: BackgroundTa
     )
 
 
+# ── Authentication Management ──────────────────────────────────────────────────
+
+@app.get("/admin/auth/list")
+async def list_admins():
+    """
+    List all configured admin accounts.
+    Useful for multi-admin setups to see which admins are available.
+    """
+    from core.auth import authenticator
+    admins = authenticator.list_admins()
+    return {
+        "configured_admins": admins,
+        "count": len(admins),
+        "primary_admin": authenticator.primary_admin
+    }
+
+
+@app.post("/admin/auth/test")
+async def test_auth(admin_email: str = None):
+    """
+    Test authentication with a specific admin account.
+    Tries to fetch a token to verify credentials are valid.
+    
+    Query params:
+        admin_email: Admin email to test. If not provided, tests primary admin.
+    """
+    from core.auth import authenticator
+    try:
+        token = await authenticator.get_token(admin_email)
+        # Return first 50 chars of token for verification
+        return {
+            "success": True,
+            "admin_email": admin_email or authenticator.primary_admin,
+            "token_preview": token[:50] + "...",
+            "message": "✓ Authentication successful"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "admin_email": admin_email or authenticator.primary_admin,
+            "error": str(e),
+            "message": "✗ Authentication failed. Check credentials in .env"
+        }
+
+
+@app.post("/admin/auth/refresh")
+async def refresh_tokens(admin_email: str = None):
+    """
+    Force refresh tokens for admin(s).
+    Clears cache and fetches new tokens from Spring Boot.
+    
+    Query params:
+        admin_email: Specific admin to refresh. If not provided, refreshes all.
+    """
+    from core.auth import authenticator, token_cache
+    
+    if admin_email:
+        token_cache.clear(admin_email)
+        try:
+            token = await authenticator.get_token(admin_email)
+            return {
+                "success": True,
+                "admin_email": admin_email,
+                "message": f"✓ Token refreshed for {admin_email}"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "admin_email": admin_email,
+                "error": str(e),
+                "message": f"✗ Failed to refresh token: {str(e)}"
+            }
+    else:
+        # Refresh all admins
+        token_cache.clear()
+        tokens = await authenticator.get_tokens_for_all_admins()
+        return {
+            "success": len(tokens) > 0,
+            "refreshed_count": len(tokens),
+            "admins": list(tokens.keys()),
+            "message": f"✓ Refreshed tokens for {len(tokens)} admin(s)"
+        }
+
+
 @app.get("/health")
 async def health():
     return {

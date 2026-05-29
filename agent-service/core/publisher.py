@@ -2,11 +2,11 @@ import os
 import logging
 import httpx
 from schemas.problem import GeneratedProblem
+from core.auth import authenticator
 
 logger = logging.getLogger(__name__)
 
 SPRING_URL = os.getenv("SPRING_BOOT_URL", "http://localhost:8080")
-TOKEN = os.getenv("SPRING_BOOT_TOKEN", "")
 
 
 def build_spring_payload(problem: GeneratedProblem) -> dict:
@@ -33,14 +33,28 @@ def build_spring_payload(problem: GeneratedProblem) -> dict:
     }
 
 
-async def publish_problem(problem: GeneratedProblem) -> bool:
+async def publish_problem(problem: GeneratedProblem, admin_email: str = None) -> bool:
     """
     POSTs a generated problem to Spring Boot.
-    Returns True on success, False on failure.
+    Automatically authenticates using configured admin credentials.
+    
+    Args:
+        problem: GeneratedProblem to publish
+        admin_email: Admin email to authenticate as. If None, uses primary admin.
+    
+    Returns:
+        True on success, False on failure.
     """
+    try:
+        # Get fresh token (cached if valid)
+        token = await authenticator.get_token(admin_email)
+    except Exception as e:
+        logger.error(f"Failed to authenticate with Spring Boot: {e}")
+        return False
+    
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {TOKEN}"
+        "Authorization": f"Bearer {token}"
     }
     payload = build_spring_payload(problem)
 
