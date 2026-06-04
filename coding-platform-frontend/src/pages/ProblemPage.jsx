@@ -229,7 +229,7 @@ export function ProblemPage({ navigate, slug }) {
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {diffBadge(problem.difficulty)}
-              {problem.topicTags?.map((t) => (
+              {problem.topicTags == null && problem.topicTags?.map((t) => (
                 <span key={t} className="tag">
                   {t}
                 </span>

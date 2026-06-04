@@ -45,7 +45,13 @@ Generate 4 additional EDGE CASE test cases that stress-test:
 - Cases that break greedy approaches
 - Large inputs near the constraint boundary
 
-Return ONLY this JSON array:
+CRITICAL: input and expected_output MUST be strings (JSON-encoded if complex).
+Examples:
+  {{"input": "[1, 2, 3]", "expected_output": "6", "hidden": true}}
+  {{"input": "[100000]", "expected_output": "100000", "hidden": true}}
+  {{"input": "5\\n10", "expected_output": "15", "hidden": true}}
+
+Return ONLY this JSON array (no markdown, no explanation):
 [
   {{"input": "...", "expected_output": "...", "hidden": true}},
   {{"input": "...", "expected_output": "...", "hidden": true}},
@@ -63,9 +69,27 @@ Return ONLY this JSON array:
             raw = raw.split("```")[1]
             if raw.startswith("json"):
                 raw = raw[4:]
+            raw = raw.rstrip("`").strip()
 
-        data = json.loads(raw.strip())
-        new_cases = [TestCase(**tc) for tc in data]
+        data = json.loads(raw)
+        
+        # Process test cases: ensure input/output are strings
+        new_cases = []
+        for tc in data:
+            input_val = tc.get("input", "")
+            output_val = tc.get("expected_output", "")
+            
+            # Convert to string if not already
+            if not isinstance(input_val, str):
+                input_val = json.dumps(input_val)
+            if not isinstance(output_val, str):
+                output_val = json.dumps(output_val)
+            
+            new_cases.append(TestCase(
+                input=input_val,
+                expected_output=output_val,
+                hidden=tc.get("hidden", True)
+            ))
 
         # Merge with existing test cases
         combined = problem.test_cases + new_cases

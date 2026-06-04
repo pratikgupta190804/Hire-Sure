@@ -2,6 +2,7 @@ export function AdminLayout({ children, navigate, path }) {
   const links = [
     { to: "/admin", label: "Dashboard", icon: "▦" },
     { to: "/admin/problems", label: "Problems", icon: "≡" },
+    { to: "/admin/contests", label: "Contests", icon: "⏱" },
     { to: "/admin/problems/new", label: "Add Problem", icon: "+" },
     { to: "/admin/generate", label: "AI Generator", icon: "✦" },
   ];
@@ -9,7 +10,16 @@ export function AdminLayout({ children, navigate, path }) {
   return (
     <div className="layout">
       <div className="sidebar">
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "4px 14px 12px" }}>
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: "var(--text3)",
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            padding: "4px 14px 12px",
+          }}
+        >
           Admin Panel
         </div>
         {links.map((l) => (

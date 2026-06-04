@@ -17,6 +17,8 @@ import { AdminDashboard } from "./pages/admin/AdminDashboard";
 import { AdminProblemsPage } from "./pages/admin/AdminProblemsPage";
 import { ProblemFormPage } from "./pages/admin/ProblemFormPage";
 import { AIGeneratorPage } from "./pages/admin/AIGeneratorPage";
+import { AdminContestsPage } from "./pages/admin/AdminContestsPage";
+import { ContestFormPage } from "./pages/admin/ContestFormPage";
 
 function Router() {
   const { path, navigate } = useRoute();
@@ -25,19 +27,39 @@ function Router() {
 
   const routes = [
     { pattern: "/", component: () => <LandingPage navigate={navigate} /> },
-    { pattern: "/login", component: () => <AuthPage navigate={navigate} mode="login" /> },
-    { pattern: "/register", component: () => <AuthPage navigate={navigate} mode="register" /> },
-    { pattern: "/problems", component: () => <ProblemsPage navigate={navigate} /> },
-    { pattern: "/problems/:slug", component: (p) => <ProblemPage navigate={navigate} slug={p.slug} /> },
+    {
+      pattern: "/login",
+      component: () => <AuthPage navigate={navigate} mode="login" />,
+    },
+    {
+      pattern: "/register",
+      component: () => <AuthPage navigate={navigate} mode="register" />,
+    },
+    {
+      pattern: "/problems",
+      component: () => <ProblemsPage navigate={navigate} />,
+    },
+    {
+      pattern: "/problems/:slug",
+      component: (p) => <ProblemPage navigate={navigate} slug={p.slug} />,
+    },
     {
       pattern: "/submissions",
       component: () =>
-        user ? <SubmissionsPage navigate={navigate} /> : <AuthPage navigate={navigate} mode="login" />,
+        user ? (
+          <SubmissionsPage navigate={navigate} />
+        ) : (
+          <AuthPage navigate={navigate} mode="login" />
+        ),
     },
     {
       pattern: "/profile",
       component: () =>
-        user ? <ProfilePage navigate={navigate} /> : <AuthPage navigate={navigate} mode="login" />,
+        user ? (
+          <ProfilePage navigate={navigate} />
+        ) : (
+          <AuthPage navigate={navigate} mode="login" />
+        ),
     },
     {
       pattern: "/admin",
@@ -94,6 +116,39 @@ function Router() {
           <NotFound navigate={navigate} />
         ),
     },
+    {
+      pattern: "/admin/contests",
+      component: () =>
+        isAdmin ? (
+          <AdminLayout navigate={navigate} path={path}>
+            <AdminContestsPage navigate={navigate} />
+          </AdminLayout>
+        ) : (
+          <NotFound navigate={navigate} />
+        ),
+    },
+    {
+      pattern: "/admin/contests/new",
+      component: () =>
+        isAdmin ? (
+          <AdminLayout navigate={navigate} path={path}>
+            <ContestFormPage navigate={navigate} />
+          </AdminLayout>
+        ) : (
+          <NotFound navigate={navigate} />
+        ),
+    },
+    {
+      pattern: "/admin/contests/:id/edit",
+      component: (p) =>
+        isAdmin ? (
+          <AdminLayout navigate={navigate} path={path}>
+            <ContestFormPage navigate={navigate} contestId={p.id} />
+          </AdminLayout>
+        ) : (
+          <NotFound navigate={navigate} />
+        ),
+    },
   ];
 
   let matched = null;
@@ -110,7 +165,14 @@ function Router() {
       <GlobalStyle />
       <Navbar navigate={navigate} path={path} />
       {matched || <NotFound navigate={navigate} />}
-      {toast && <Toast key={toast.id} msg={toast.msg} type={toast.type} onClose={clear} />}
+      {toast && (
+        <Toast
+          key={toast.id}
+          msg={toast.msg}
+          type={toast.type}
+          onClose={clear}
+        />
+      )}
     </>
   );
 }

@@ -9,6 +9,7 @@ import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +34,7 @@ import java.util.concurrent.*;
  *  7. Clean up temp directory
  */
 @Service
+@ConditionalOnProperty(name = "execution.enabled", havingValue = "true", matchIfMissing = true)
 public class CodeExecutionEngine implements ExecutionService {
 
     @Value("${execution.time-limit-seconds:5}")

@@ -44,10 +44,17 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/**").permitAll()
                         // Anyone can browse problems
                         .requestMatchers(HttpMethod.GET, "/api/problems/**").permitAll()
+                        // Anyone can browse contests
+                        .requestMatchers("/api/contests/participated").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/contests/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/contests/*/join").authenticated()
                         // Admin only
                         .requestMatchers(HttpMethod.POST, "/api/problems/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.PUT,  "/api/problems/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.DELETE, "/api/problems/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.POST, "/api/contests/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.PUT,  "/api/contests/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/api/contests/**").hasRole("ADMIN")
                         // Everything else requires login
                         .anyRequest().authenticated()
                 )

@@ -15,6 +15,10 @@ public class ProblemDetailResponse {
     private String outputFormat;
     private String sampleInput;
     private String sampleOutput;
+    private String timeComplexity;
+    private String spaceComplexity;
+    private String hints;
+    private String topicTags;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

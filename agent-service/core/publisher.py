@@ -11,6 +11,7 @@ SPRING_URL = os.getenv("SPRING_BOOT_URL", "http://localhost:8080")
 
 def build_spring_payload(problem: GeneratedProblem) -> dict:
     """Converts GeneratedProblem to Spring Boot's ProblemRequest format."""
+    import json
     return {
         "title": problem.title,
         "description": problem.description,
@@ -20,6 +21,10 @@ def build_spring_payload(problem: GeneratedProblem) -> dict:
         "outputFormat": problem.output_format,
         "sampleInput": problem.sample_input,
         "sampleOutput": problem.sample_output,
+        "timeComplexity": problem.time_complexity,
+        "spaceComplexity": problem.space_complexity,
+        "hints": json.dumps(problem.hints),
+        "topicTags": json.dumps(problem.topic_tags),
         "testCases": [
             {
                 "input": tc.input,
@@ -28,8 +33,6 @@ def build_spring_payload(problem: GeneratedProblem) -> dict:
             }
             for tc in problem.test_cases
         ],
-        # hints, topic_tags, complexities stored in description for now
-        # (extend Spring Boot schema later to support these fields)
     }
 
 

@@ -5,7 +5,12 @@ import { AGENT } from "../../utils/constants";
 import { EditPreviewForm } from "./EditPreviewForm";
 
 export function AIGeneratorPage() {
-  const [genForm, setGenForm] = useState({ topic: "", difficulty: "", company_style: "", count: 1 });
+  const [genForm, setGenForm] = useState({
+    topic: "",
+    difficulty: "",
+    company_style: "",
+    count: 1,
+  });
   const [generating, setGenerating] = useState(false);
   const [previews, setPreviews] = useState([]);
   const [loadingPreviews, setLoadingPreviews] = useState(true);
@@ -47,7 +52,10 @@ export function AIGeneratorPage() {
       });
       if (!r.ok) throw new Error("Agent service error");
       const d = await r.json();
-      show(`Generated ${d.problems_generated} problem(s)! Review below.`, "success");
+      show(
+        `Generated ${d.problems_generated} problem(s)! Review below.`,
+        "success",
+      );
       loadPreviews();
     } catch (e) {
       show(e.message || "Could not reach agent service", "error");
@@ -60,9 +68,15 @@ export function AIGeneratorPage() {
     try {
       const r = await fetch(`${AGENT}/generate/preview/list`);
       const d = await r.json();
-      const preview = (d.previews || []).find((p) => p.preview_id === previewId);
+      const preview = (d.previews || []).find(
+        (p) => p.preview_id === previewId,
+      );
       setEditingId(previewId);
-      setEditForm({ ...preview, test_cases: preview.test_cases || [], hints: preview.hints || [] });
+      setEditForm({
+        ...preview,
+        test_cases: preview.test_cases || [],
+        hints: preview.hints || [],
+      });
     } catch {
       show("Could not load problem details", "error");
     }
@@ -92,7 +106,9 @@ export function AIGeneratorPage() {
     if (!confirm("Discard this problem?")) return;
     setDiscarding(previewId);
     try {
-      await fetch(`${AGENT}/generate/preview/${previewId}`, { method: "DELETE" });
+      await fetch(`${AGENT}/generate/preview/${previewId}`, {
+        method: "DELETE",
+      });
       show("Problem discarded", "success");
       loadPreviews();
     } catch {
@@ -105,7 +121,9 @@ export function AIGeneratorPage() {
   const saveDirectly = async (previewId) => {
     setSaving(previewId);
     try {
-      const r = await fetch(`${AGENT}/generate/save/${previewId}`, { method: "POST" });
+      const r = await fetch(`${AGENT}/generate/save/${previewId}`, {
+        method: "POST",
+      });
       if (!r.ok) throw new Error("Failed to save");
       show("Problem saved to database!", "success");
       loadPreviews();
@@ -118,28 +136,64 @@ export function AIGeneratorPage() {
 
   return (
     <div className="page">
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 4,
+        }}
+      >
         <h1 style={{ fontSize: 22, fontWeight: 700 }}>AI Problem Generator</h1>
-        <span className="badge" style={{ background: "rgba(139,92,246,0.1)", color: "var(--purple)" }}>
-          Gemini 2.5 Flash
+        <span
+          className="badge"
+          style={{ background: "rgba(34,197,94,0.1)", color: "var(--green)" }}
+        >
+          Groq (Llama 3.3 70B)
         </span>
       </div>
       <p style={{ color: "var(--text3)", fontSize: 13, marginBottom: 24 }}>
-        Generate problems using AI, review and edit them, then save to the platform.
+        Generate problems using AI, review and edit them, then save to the
+        platform.
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 24, alignItems: "start" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "360px 1fr",
+          gap: 24,
+          alignItems: "start",
+        }}
+      >
         {/* Generator form */}
         <div className="card" style={{ position: "sticky", top: 80 }}>
-          <div style={{ fontWeight: 600, marginBottom: 16 }}>Generate Problems</div>
-          <form onSubmit={generate} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontWeight: 600, marginBottom: 16 }}>
+            Generate Problems
+          </div>
+          <form
+            onSubmit={generate}
+            style={{ display: "flex", flexDirection: "column", gap: 14 }}
+          >
             <div className="form-group">
               <label className="label">Topic</label>
-              <input className="input" placeholder="e.g. dynamic programming" value={genForm.topic} onChange={(e) => setGenForm({ ...genForm, topic: e.target.value })} />
+              <input
+                className="input"
+                placeholder="e.g. dynamic programming"
+                value={genForm.topic}
+                onChange={(e) =>
+                  setGenForm({ ...genForm, topic: e.target.value })
+                }
+              />
             </div>
             <div className="form-group">
               <label className="label">Difficulty</label>
-              <select className="input" value={genForm.difficulty} onChange={(e) => setGenForm({ ...genForm, difficulty: e.target.value })}>
+              <select
+                className="input"
+                value={genForm.difficulty}
+                onChange={(e) =>
+                  setGenForm({ ...genForm, difficulty: e.target.value })
+                }
+              >
                 <option value="">Any</option>
                 <option value="EASY">Easy</option>
                 <option value="MEDIUM">Medium</option>
@@ -148,15 +202,39 @@ export function AIGeneratorPage() {
             </div>
             <div className="form-group">
               <label className="label">Company Style</label>
-              <input className="input" placeholder="e.g. Google, Amazon" value={genForm.company_style} onChange={(e) => setGenForm({ ...genForm, company_style: e.target.value })} />
+              <input
+                className="input"
+                placeholder="e.g. Google, Amazon"
+                value={genForm.company_style}
+                onChange={(e) =>
+                  setGenForm({ ...genForm, company_style: e.target.value })
+                }
+              />
             </div>
             <div className="form-group">
               <label className="label">Count (1-10)</label>
-              <input className="input" type="number" min={1} max={10} value={genForm.count} onChange={(e) => setGenForm({ ...genForm, count: e.target.value })} />
+              <input
+                className="input"
+                type="number"
+                min={1}
+                max={10}
+                value={genForm.count}
+                onChange={(e) =>
+                  setGenForm({ ...genForm, count: e.target.value })
+                }
+              />
             </div>
-            <button type="submit" className="btn btn-primary" disabled={generating} style={{ marginTop: 4 }}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={generating}
+              style={{ marginTop: 4 }}
+            >
               {generating ? (
-                <><span className="spinner" style={{ width: 14, height: 14 }} /> Generating...</>
+                <>
+                  <span className="spinner" style={{ width: 14, height: 14 }} />{" "}
+                  Generating...
+                </>
               ) : (
                 "✦ Generate"
               )}
@@ -164,60 +242,133 @@ export function AIGeneratorPage() {
           </form>
           <div className="divider" />
           <div style={{ fontSize: 12, color: "var(--text3)", lineHeight: 1.7 }}>
-            Problems are generated then queued for your review. You can edit any field before saving to the database.
+            Problems are generated then queued for your review. You can edit any
+            field before saving to the database.
           </div>
         </div>
 
         {/* Preview queue */}
         <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 16,
+            }}
+          >
             <div style={{ fontWeight: 600, fontSize: 15 }}>
               Review Queue{" "}
-              <span style={{ color: "var(--text3)", fontSize: 13, fontWeight: 400 }}>({previews.length} waiting)</span>
+              <span
+                style={{ color: "var(--text3)", fontSize: 13, fontWeight: 400 }}
+              >
+                ({previews.length} waiting)
+              </span>
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={loadPreviews}>↻ Refresh</button>
+            <button className="btn btn-ghost btn-sm" onClick={loadPreviews}>
+              ↻ Refresh
+            </button>
           </div>
 
           {loadingPreviews ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
+            <div
+              style={{ display: "flex", justifyContent: "center", padding: 40 }}
+            >
               <div className="spinner" />
             </div>
           ) : previews.length === 0 ? (
             <div className="card empty-state">
               <div className="icon">✦</div>
               <p>No problems in queue</p>
-              <span style={{ fontSize: 13, color: "var(--text3)" }}>Generate some problems to get started</span>
+              <span style={{ fontSize: 13, color: "var(--text3)" }}>
+                Generate some problems to get started
+              </span>
             </div>
           ) : (
             previews.map((p) => (
-              <div key={p.preview_id} className="card" style={{ marginBottom: 16 }}>
+              <div
+                key={p.preview_id}
+                className="card"
+                style={{ marginBottom: 16 }}
+              >
                 {editingId === p.preview_id && editForm ? (
                   <EditPreviewForm
                     editForm={editForm}
                     setEditForm={setEditForm}
                     onSave={() => saveEdited(p.preview_id)}
-                    onCancel={() => { setEditingId(null); setEditForm(null); }}
+                    onCancel={() => {
+                      setEditingId(null);
+                      setEditForm(null);
+                    }}
                     saving={saving === p.preview_id}
                   />
                 ) : (
                   <div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        marginBottom: 12,
+                      }}
+                    >
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{p.title}</div>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: 15,
+                            marginBottom: 4,
+                          }}
+                        >
+                          {p.title}
+                        </div>
                         <div style={{ display: "flex", gap: 8 }}>
                           {diffBadge(p.difficulty)}
-                          <span style={{ fontSize: 11, color: "var(--text3)", fontFamily: "var(--mono)" }}>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "var(--text3)",
+                              fontFamily: "var(--mono)",
+                            }}
+                          >
                             {p.preview_id.slice(0, 8)}...
                           </span>
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8 }}>
-                        <button className="btn btn-ghost btn-sm" onClick={() => startEdit(p.preview_id)}>✎ Edit</button>
-                        <button className="btn btn-primary btn-sm" onClick={() => saveDirectly(p.preview_id)} disabled={saving === p.preview_id}>
-                          {saving === p.preview_id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : "✓ Save"}
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => startEdit(p.preview_id)}
+                        >
+                          ✎ Edit
                         </button>
-                        <button className="btn btn-danger btn-sm" onClick={() => discard(p.preview_id)} disabled={discarding === p.preview_id}>
-                          {discarding === p.preview_id ? <span className="spinner" style={{ width: 12, height: 12 }} /> : "✕"}
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => saveDirectly(p.preview_id)}
+                          disabled={saving === p.preview_id}
+                        >
+                          {saving === p.preview_id ? (
+                            <span
+                              className="spinner"
+                              style={{ width: 12, height: 12 }}
+                            />
+                          ) : (
+                            "✓ Save"
+                          )}
+                        </button>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => discard(p.preview_id)}
+                          disabled={discarding === p.preview_id}
+                        >
+                          {discarding === p.preview_id ? (
+                            <span
+                              className="spinner"
+                              style={{ width: 12, height: 12 }}
+                            />
+                          ) : (
+                            "✕"
+                          )}
                         </button>
                       </div>
                     </div>

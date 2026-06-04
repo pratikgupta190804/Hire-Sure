@@ -6,15 +6,25 @@ export function Navbar({ navigate, path }) {
 
   return (
     <nav className="nav">
-      <div className="nav-brand" onClick={() => navigate("/")} style={{ cursor: "pointer" }}>
+      <div
+        className="nav-brand"
+        onClick={() => navigate("/")}
+        style={{ cursor: "pointer" }}
+      >
         ⌥ <span>DSA</span>Platform
       </div>
       <div className="nav-links">
-        <span className={isActive("/problems")} onClick={() => navigate("/problems")}>
+        <span
+          className={isActive("/problems")}
+          onClick={() => navigate("/problems")}
+        >
           Problems
         </span>
         {user && (
-          <span className={isActive("/submissions")} onClick={() => navigate("/submissions")}>
+          <span
+            className={isActive("/submissions")}
+            onClick={() => navigate("/submissions")}
+          >
             Submissions
           </span>
         )}
@@ -28,8 +38,19 @@ export function Navbar({ navigate, path }) {
           </span>
         )}
         {user ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
-            <span className="nav-link" onClick={() => navigate("/profile")} style={{ color: "var(--accent)" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginLeft: 8,
+            }}
+          >
+            <span
+              className="nav-link"
+              onClick={() => navigate("/profile")}
+              style={{ color: "var(--accent)" }}
+            >
               {user.username}
             </span>
             <button className="btn btn-ghost btn-sm" onClick={logout}>
@@ -38,10 +59,16 @@ export function Navbar({ navigate, path }) {
           </div>
         ) : (
           <div style={{ display: "flex", gap: 8, marginLeft: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => navigate("/login")}>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => navigate("/login")}
+            >
               Login
             </button>
-            <button className="btn btn-primary btn-sm" onClick={() => navigate("/register")}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => navigate("/register")}
+            >
               Register
             </button>
           </div>

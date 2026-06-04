@@ -184,10 +184,29 @@ async def preview_problem(request: GenerateRequest):
 @app.get("/generate/preview/list")
 async def list_previews():
     """List all problems currently in the preview store waiting for admin action."""
+    import json
     return {
         "count": len(preview_store),
         "previews": [
-            {"preview_id": pid, "title": p.title, "difficulty": p.difficulty}
+            {
+                "preview_id": pid,
+                "title": p.title,
+                "description": p.description,
+                "difficulty": p.difficulty.value,
+                "constraints": p.constraints,
+                "input_format": p.input_format,
+                "output_format": p.output_format,
+                "sample_input": p.sample_input,
+                "sample_output": p.sample_output,
+                "time_complexity": p.time_complexity,
+                "space_complexity": p.space_complexity,
+                "hints": json.loads(p.hints) if isinstance(p.hints, str) else p.hints if p.hints else [],
+                "topic_tags": json.loads(p.topic_tags) if isinstance(p.topic_tags, str) else p.topic_tags if p.topic_tags else [],
+                "test_cases": [
+                    {"input": tc.input, "expected_output": tc.expected_output, "hidden": tc.hidden}
+                    for tc in p.test_cases
+                ] if hasattr(p, 'test_cases') else []
+            }
             for pid, p in preview_store.items()
         ]
     }
@@ -334,6 +353,62 @@ async def health():
         "scheduler": scheduler.running,
         "next_daily_run": str(scheduler.get_job("daily_generate").next_run_time)
         if scheduler.get_job("daily_generate") else None
+    }
+
+
+# ── Optimization Monitoring (Solutions 2-4) ────────────────────────────────────
+
+@app.get("/admin/optimize/llm-config")
+async def get_llm_config():
+    """Get current LLM configuration and rate limit info."""
+    from core.llm import PRIMARY_LLM
+    from core.rate_limiter import get_all_limiter_stats
+    
+    return {
+        "primary_llm": PRIMARY_LLM,
+        "available_llms": ["groq", "gemini", "together", "ollama"],
+        "rate_limiters": get_all_limiter_stats(),
+        "note": "To change PRIMARY_LLM, set env var PRIMARY_LLM=groq|gemini|together|ollama"
+    }
+
+
+@app.get("/admin/optimize/cache-stats")
+async def get_cache_stats():
+    """Get LLM response cache statistics."""
+    from core.cache import get_cache_info
+    return get_cache_info()
+
+
+@app.post("/admin/optimize/cache/clear")
+async def clear_cache(prefix: str = None):
+    """Clear LLM response cache."""
+    from core.cache import clear_cache as clear_cache_fn
+    clear_cache_fn(prefix)
+    return {
+        "success": True,
+        "cleared_prefix": prefix or "all",
+        "message": f"✓ Cache cleared"
+    }
+
+
+@app.get("/admin/optimize/stats")
+async def get_optimization_stats():
+    """Get comprehensive optimization statistics."""
+    from core.cache import get_cache_info
+    from core.rate_limiter import get_all_limiter_stats
+    from core.llm import PRIMARY_LLM
+    
+    cache_info = get_cache_info()
+    rate_limiters = get_all_limiter_stats()
+    
+    return {
+        "configuration": {
+            "primary_llm": PRIMARY_LLM,
+            "api_calls_per_problem": 4,
+            "note": "Reduced from 5 to 4 by removing difficulty_analyzer"
+        },
+        "cache": cache_info,
+        "rate_limiters": rate_limiters
     }
 
 

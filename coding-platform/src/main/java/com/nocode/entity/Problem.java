@@ -47,6 +47,18 @@ public class Problem {
     @Column(columnDefinition = "TEXT")
     private String sampleOutput;
 
+    @Column(columnDefinition = "TEXT")
+    private String timeComplexity;
+
+    @Column(columnDefinition = "TEXT")
+    private String spaceComplexity;
+
+    @Column(columnDefinition = "TEXT")
+    private String hints;
+
+    @Column(columnDefinition = "TEXT")
+    private String topicTags;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private User createdBy;

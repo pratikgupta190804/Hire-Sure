@@ -1,6 +1,8 @@
 package com.nocode.dto.request;
 
 import com.nocode.enums.Difficulty;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
@@ -8,7 +10,7 @@ import lombok.Data;
 import java.util.List;
 
 @Data
-public class ProblemRequest {
+public class ContestProblemRequest {
 
     @NotBlank
     private String title;
@@ -24,10 +26,10 @@ public class ProblemRequest {
     private String outputFormat;
     private String sampleInput;
     private String sampleOutput;
-    private String timeComplexity;
-    private String spaceComplexity;
-    private String hints;
-    private String topicTags;
 
+    @Min(0)
+    private int points;
+
+    @Valid
     private List<TestCaseRequest> testCases;
 }

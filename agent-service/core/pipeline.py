@@ -5,7 +5,6 @@ from core.state import ProblemState
 from agents.generator import generator_agent
 from agents.validator import validator_agent
 from agents.test_case_generator import test_case_generator_agent
-from agents.difficulty_analyzer import difficulty_analyzer_agent
 from agents.hint_generator import hint_generator_agent
 
 logger = logging.getLogger(__name__)
@@ -46,18 +45,20 @@ def build_pipeline():
     """
     Builds and compiles the LangGraph pipeline.
 
-    Flow:
-        generate → validate → [retry? → generate again] → test_cases → difficulty → hints → END
+    Flow (OPTIMIZED - removed difficulty_analyzer):
+        generate → validate → [retry? → generate again] → test_cases → hints → END
+    
+    This saves 1 LLM call per problem (20% reduction).
+    Difficulty is already provided by generator, no need for separate analysis.
     """
     graph = StateGraph(ProblemState)
 
-    # Register all agent nodes
-    graph.add_node("generate",       generator_agent)
-    graph.add_node("validate",       validator_agent)
+    # Register agent nodes (removed difficulty_analyzer for efficiency)
+    graph.add_node("generate",        generator_agent)
+    graph.add_node("validate",        validator_agent)
     graph.add_node("increment_retry", increment_retry)
-    graph.add_node("test_cases",     test_case_generator_agent)
-    graph.add_node("difficulty",     difficulty_analyzer_agent)
-    graph.add_node("hints",          hint_generator_agent)
+    graph.add_node("test_cases",      test_case_generator_agent)
+    graph.add_node("hints",           hint_generator_agent)
 
     # Entry point
     graph.set_entry_point("generate")
@@ -65,8 +66,7 @@ def build_pipeline():
     # Linear edges
     graph.add_edge("generate", "validate")
     graph.add_edge("increment_retry", "generate")
-    graph.add_edge("test_cases", "difficulty")
-    graph.add_edge("difficulty", "hints")
+    graph.add_edge("test_cases", "hints")  # Skip difficulty, go straight to hints
     graph.add_edge("hints", END)
 
     # Conditional edge after validation: retry or proceed

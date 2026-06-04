@@ -82,6 +82,10 @@ public class ProblemService {
                 .outputFormat(request.getOutputFormat())
                 .sampleInput(request.getSampleInput())
                 .sampleOutput(request.getSampleOutput())
+                .timeComplexity(request.getTimeComplexity())
+                .spaceComplexity(request.getSpaceComplexity())
+                .hints(request.getHints())
+                .topicTags(request.getTopicTags())
                 .createdBy(admin)
                 .build();
 
@@ -113,6 +117,10 @@ public class ProblemService {
         problem.setOutputFormat(request.getOutputFormat());
         problem.setSampleInput(request.getSampleInput());
         problem.setSampleOutput(request.getSampleOutput());
+        problem.setTimeComplexity(request.getTimeComplexity());
+        problem.setSpaceComplexity(request.getSpaceComplexity());
+        problem.setHints(request.getHints());
+        problem.setTopicTags(request.getTopicTags());
 
         return toDetail(problemRepository.save(problem));
     }
@@ -139,6 +147,10 @@ public class ProblemService {
                 .outputFormat(p.getOutputFormat())
                 .sampleInput(p.getSampleInput())
                 .sampleOutput(p.getSampleOutput())
+                .timeComplexity(p.getTimeComplexity())
+                .spaceComplexity(p.getSpaceComplexity())
+                .hints(p.getHints())
+                .topicTags(p.getTopicTags())
                 .createdAt(p.getCreatedAt())
                 .updatedAt(p.getUpdatedAt())
                 .build();
