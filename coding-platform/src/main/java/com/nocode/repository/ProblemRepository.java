@@ -10,7 +10,16 @@ import java.util.Optional;
 
 public interface ProblemRepository extends JpaRepository<Problem, String> {
     Optional<Problem> findBySlug(String slug);
+
     boolean existsBySlug(String slug);
+
     Page<Problem> findByDifficulty(Difficulty difficulty, Pageable pageable);
+
     Page<Problem> findByTitleContainingIgnoreCase(String title, Pageable pageable);
+
+    Page<Problem> findByIsContestOnlyFalse(Pageable pageable);
+
+    Page<Problem> findByDifficultyAndIsContestOnlyFalse(Difficulty difficulty, Pageable pageable);
+
+    Page<Problem> findByTitleContainingIgnoreCaseAndIsContestOnlyFalse(String title, Pageable pageable);
 }

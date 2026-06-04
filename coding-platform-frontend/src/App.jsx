@@ -20,6 +20,9 @@ import { AIGeneratorPage } from "./pages/admin/AIGeneratorPage";
 import { AdminContestsPage } from "./pages/admin/AdminContestsPage";
 import { ContestFormPage } from "./pages/admin/ContestFormPage";
 
+import ContestListPage from "./pages/ContestListPage";
+import ContestDetailPage from "./pages/ContestDetailPage";
+
 function Router() {
   const { path, navigate } = useRoute();
   const { user, isAdmin } = useAuth();
@@ -148,6 +151,16 @@ function Router() {
         ) : (
           <NotFound navigate={navigate} />
         ),
+    },
+    {
+      pattern: "/contests",
+      component: () => <ContestListPage navigate={navigate} />,
+    },
+    {
+      pattern: "/contests/:id",
+      component: (p) => (
+        <ContestDetailPage contestId={p.id} navigate={navigate} />
+      ),
     },
   ];
 

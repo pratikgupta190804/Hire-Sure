@@ -10,6 +10,7 @@ import java.util.List;
 @Builder
 public class ContestProblemResponse {
     private String title;
+    private String slug;
     private String description;
     private Difficulty difficulty;
     private String constraints;

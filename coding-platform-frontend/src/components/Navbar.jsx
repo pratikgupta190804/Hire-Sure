@@ -20,6 +20,12 @@ export function Navbar({ navigate, path }) {
         >
           Problems
         </span>
+        <span
+          className={isActive("/contests")}
+          onClick={() => navigate("/contests")}
+        >
+          Contests
+        </span>
         {user && (
           <span
             className={isActive("/submissions")}

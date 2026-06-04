@@ -35,16 +35,16 @@ public class ProblemService {
     // ── Public queries ──────────────────────────────────────────────────
 
     public Page<ProblemSummaryResponse> listProblems(Difficulty difficulty,
-                                                     String search,
-                                                     String currentUserId,
-                                                     Pageable pageable) {
+            String search,
+            String currentUserId,
+            Pageable pageable) {
         Page<Problem> page;
         if (difficulty != null) {
-            page = problemRepository.findByDifficulty(difficulty, pageable);
+            page = problemRepository.findByDifficultyAndIsContestOnlyFalse(difficulty, pageable);
         } else if (search != null && !search.isBlank()) {
-            page = problemRepository.findByTitleContainingIgnoreCase(search, pageable);
+            page = problemRepository.findByTitleContainingIgnoreCaseAndIsContestOnlyFalse(search, pageable);
         } else {
-            page = problemRepository.findAll(pageable);
+            page = problemRepository.findByIsContestOnlyFalse(pageable);
         }
 
         return page.map(p -> ProblemSummaryResponse.builder()
@@ -157,7 +157,8 @@ public class ProblemService {
     }
 
     private boolean isSolvedByUser(String problemId, String userId) {
-        if (userId == null) return false;
+        if (userId == null)
+            return false;
         return submissionRepository.existsByUserIdAndProblemIdAndStatus(
                 userId, problemId, SubmissionStatus.ACCEPTED);
     }

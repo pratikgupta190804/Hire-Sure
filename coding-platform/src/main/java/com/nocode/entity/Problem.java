@@ -12,7 +12,11 @@ import java.util.List;
 
 @Entity
 @Table(name = "problems")
-@Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class Problem {
 
     @Id
@@ -58,6 +62,9 @@ public class Problem {
 
     @Column(columnDefinition = "TEXT")
     private String topicTags;
+
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean isContestOnly = false;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")

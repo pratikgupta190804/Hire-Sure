@@ -27,6 +27,9 @@ public class ContestProblem {
     @Column(nullable = false)
     private String title;
 
+    @Column(nullable = false, unique = true)
+    private String globalProblemSlug;
+
     @Column(nullable = false, columnDefinition = "TEXT")
     private String description;
 

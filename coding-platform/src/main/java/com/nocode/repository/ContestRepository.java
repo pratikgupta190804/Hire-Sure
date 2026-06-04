@@ -9,6 +9,8 @@ import java.time.LocalDateTime;
 
 public interface ContestRepository extends JpaRepository<Contest, String> {
 	Page<Contest> findByStartAtAfter(LocalDateTime time, Pageable pageable);
+
 	Page<Contest> findByEndAtBefore(LocalDateTime time, Pageable pageable);
+
 	Page<Contest> findByStartAtBeforeAndEndAtAfter(LocalDateTime start, LocalDateTime end, Pageable pageable);
 }

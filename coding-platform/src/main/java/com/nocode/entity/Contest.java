@@ -3,6 +3,7 @@ package com.nocode.entity;
 import com.nocode.enums.ContestVisibility;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
@@ -49,6 +50,10 @@ public class Contest {
     @OneToMany(mappedBy = "contest", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("orderIndex ASC")
     @Builder.Default
+    // Fix: @BatchSize tells Hibernate to load problems for up to 30 contests
+    // in a single IN-clause query rather than one query per contest,
+    // working alongside the JOIN FETCH in ContestParticipationRepository.
+    @BatchSize(size = 30)
     private List<ContestProblem> problems = new ArrayList<>();
 
     @CreationTimestamp
