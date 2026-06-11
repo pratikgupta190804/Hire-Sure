@@ -7,6 +7,7 @@ import { Navbar } from "./components/Navbar";
 import { Toast } from "./components/Toast";
 import { LandingPage } from "./pages/LandingPage";
 import { AuthPage } from "./pages/AuthPage";
+import { OAuth2RedirectHandler } from "./pages/OAuth2RedirectHandler";
 import { ProblemsPage } from "./pages/ProblemsPage";
 import { ProblemPage } from "./pages/ProblemPage";
 import { SubmissionsPage } from "./pages/SubmissionsPage";
@@ -37,6 +38,10 @@ function Router() {
     {
       pattern: "/register",
       component: () => <AuthPage navigate={navigate} mode="register" />,
+    },
+    {
+      pattern: "/oauth2/redirect",
+      component: () => <OAuth2RedirectHandler navigate={navigate} />,
     },
     {
       pattern: "/problems",

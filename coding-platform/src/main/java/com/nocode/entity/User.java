@@ -19,11 +19,14 @@ public class User {
     @Column(unique = true, nullable = false)
     private String email;
 
-    @Column(nullable = false)
+    @Column
     private String passwordHash;
 
     @Column(unique = true, nullable = false, length = 50)
     private String username;
+
+    @Column
+    private String provider;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

@@ -1,17 +1,40 @@
 import { useState, useEffect } from "react";
 
 export function useRoute() {
-  const [path, setPath] = useState(window.location.hash.slice(1) || "/");
+  const [path, setPath] = useState(window.location.pathname);
+  const [search, setSearch] = useState(window.location.search);
 
   useEffect(() => {
-    const handler = () => setPath(window.location.hash.slice(1) || "/");
-    window.addEventListener("hashchange", handler);
-    return () => window.removeEventListener("hashchange", handler);
+    const handlePopState = () => {
+      setPath(window.location.pathname);
+      setSearch(window.location.search);
+    };
+
+    const handleLocationChange = () => {
+      setPath(window.location.pathname);
+      setSearch(window.location.search);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("pushstate", handleLocationChange);
+    window.addEventListener("replacestate", handleLocationChange);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("pushstate", handleLocationChange);
+      window.removeEventListener("replacestate", handleLocationChange);
+    };
   }, []);
 
   const navigate = (to) => {
-    window.location.hash = to;
+    window.history.pushState(null, "", to);
+    window.dispatchEvent(new Event("pushstate"));
   };
 
-  return { path, navigate };
+  const query = {};
+  new URLSearchParams(search).forEach((value, key) => {
+    query[key] = value;
+  });
+
+  return { path, query, navigate };
 }
