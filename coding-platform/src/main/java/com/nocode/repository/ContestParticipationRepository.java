@@ -32,4 +32,11 @@ public interface ContestParticipationRepository extends JpaRepository<ContestPar
             ORDER BY cp.joinedAt DESC
             """)
     List<ContestParticipation> findByUserIdWithContestAndProblems(@Param("userId") String userId);
+
+    @Query("SELECT cp.contest.id FROM ContestParticipation cp WHERE cp.user.id = :userId AND cp.contest.id IN :contestIds")
+    List<String> findJoinedContestIds(@Param("userId") String userId, @Param("contestIds") List<String> contestIds);
+
+    List<ContestParticipation> findByContestIdOrderByRankingAsc(String contestId);
+
+    List<ContestParticipation> findByContestId(String contestId);
 }

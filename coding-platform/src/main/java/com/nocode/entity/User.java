@@ -30,8 +30,13 @@ public class User {
     @Builder.Default
     private Role role = Role.USER;
 
+    @Column(nullable = false, columnDefinition = "integer default 1500")
+    @Builder.Default
+    private int rating = 1500;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 }
+
 

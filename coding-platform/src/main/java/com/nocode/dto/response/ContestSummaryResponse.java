@@ -18,5 +18,6 @@ public class ContestSummaryResponse {
     private ContestStatus status;
     private int problemCount;
     private boolean participating;
+    private boolean ratingCalculated;
     private LocalDateTime createdAt;
 }

@@ -14,4 +14,16 @@ public interface SubmissionRepository extends JpaRepository<Submission, String> 
     Page<Submission> findByUserIdAndProblemId(String userId, String problemId, Pageable pageable);
     List<Submission> findByStatus(SubmissionStatus status);
     boolean existsByUserIdAndProblemIdAndStatus(String userId, String problemId, SubmissionStatus status);
+
+    @org.springframework.data.jpa.repository.Query("""
+        SELECT s FROM Submission s
+        WHERE s.problem.id IN :problemIds
+          AND s.submittedAt >= :start
+          AND s.submittedAt <= :end
+    """)
+    List<Submission> findContestSubmissions(
+        @org.springframework.data.repository.query.Param("problemIds") List<String> problemIds,
+        @org.springframework.data.repository.query.Param("start") java.time.LocalDateTime start,
+        @org.springframework.data.repository.query.Param("end") java.time.LocalDateTime end
+    );
 }

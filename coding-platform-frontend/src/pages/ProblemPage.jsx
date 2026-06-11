@@ -98,14 +98,29 @@ export function ProblemPage({ navigate, slug }) {
   const [polling, setPolling] = useState(false);
   const [activeTab, setActiveTab] = useState("description");
   const [hintIdx, setHintIdx] = useState(-1);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    setLoading(true);
+    setError(null);
+
     api(`/api/problems/${slug}`)
       .then((p) => {
         setProblem(p);
-        setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        setProblem(null);
+
+        setError(
+          err?.message ||
+          err?.response?.data?.message ||
+          "Unable to load this problem."
+        );
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+
     setCode(LANG_STARTERS[langId] || "");
   }, [slug]);
 
@@ -207,6 +222,65 @@ export function ProblemPage({ navigate, slug }) {
         }}
       >
         <div className="spinner" />
+      </div>
+    );
+
+  if (error)
+    return (
+      <div
+        className="page"
+        style={{
+          minHeight: "calc(100vh - 56px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
+        <div
+          className="card"
+          style={{
+            maxWidth: 600,
+            width: "100%",
+            padding: 32,
+            textAlign: "center",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 48,
+              marginBottom: 16,
+            }}
+          >
+            🔒
+          </div>
+
+          <h2
+            style={{
+              marginBottom: 12,
+              color: "var(--text)",
+            }}
+          >
+            Access Restricted
+          </h2>
+
+          <p
+            style={{
+              color: "var(--text2)",
+              marginBottom: 24,
+              lineHeight: 1.6,
+            }}
+          >
+            {error}
+          </p>
+
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate("/contests")}
+          >
+            Back to Contests
+          </button>
+        </div>
       </div>
     );
   if (!problem)

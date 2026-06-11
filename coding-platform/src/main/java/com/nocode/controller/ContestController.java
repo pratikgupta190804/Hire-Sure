@@ -3,8 +3,10 @@ package com.nocode.controller;
 import com.nocode.dto.request.ContestRequest;
 import com.nocode.dto.response.ContestDetailResponse;
 import com.nocode.dto.response.ContestSummaryResponse;
+import com.nocode.dto.response.ContestLeaderboardResponse;
 import com.nocode.enums.ContestStatus;
 import com.nocode.service.ContestService;
+import com.nocode.service.ContestRatingService;
 import com.nocode.util.SecurityUtil;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 public class ContestController {
 
     private final ContestService contestService;
+    private final ContestRatingService contestRatingService;
 
     @GetMapping
     public ResponseEntity<Page<ContestSummaryResponse>> listContests(
@@ -30,7 +33,8 @@ public class ContestController {
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) ContestStatus status) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("createdAt").descending());
-        return ResponseEntity.ok(contestService.listContests(pageable, status));
+        String userId = SecurityUtil.getCurrentUserId().orElse(null);
+        return ResponseEntity.ok(contestService.listContests(pageable, status, userId));
     }
 
     @GetMapping("/{id}")
@@ -75,5 +79,17 @@ public class ContestController {
     public ResponseEntity<Void> deleteContest(@PathVariable String id) {
         contestService.deleteContest(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/ranking")
+    public ResponseEntity<ContestLeaderboardResponse> getRanking(@PathVariable String id) {
+        return ResponseEntity.ok(contestService.getLeaderboard(id));
+    }
+
+    @PostMapping("/{id}/calculate-ratings")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> calculateRatings(@PathVariable String id) {
+        contestRatingService.calculateRatings(id);
+        return ResponseEntity.ok().build();
     }
 }

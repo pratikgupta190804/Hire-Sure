@@ -8,6 +8,7 @@ export function AdminContestsPage({ navigate }) {
   const [contests, setContests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(null);
+  const [calculating, setCalculating] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,6 +37,19 @@ export function AdminContestsPage({ navigate }) {
       show(e.message, "error");
     } finally {
       setDeleting(null);
+    }
+  };
+
+  const calculateRatings = async (id) => {
+    setCalculating(id);
+    try {
+      await api(`/api/contests/${id}/calculate-ratings`, { method: "POST" });
+      show("Ratings calculated!", "success");
+      load();
+    } catch (e) {
+      show(e.message || "Failed to calculate ratings", "error");
+    } finally {
+      setCalculating(null);
     }
   };
 
@@ -109,6 +123,40 @@ export function AdminContestsPage({ navigate }) {
                   <td>{c.problemCount ?? 0}</td>
                   <td>
                     <div style={{ display: "flex", gap: 6 }}>
+                      {c.status === "FINISHED" && (
+                        c.ratingCalculated ? (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: "var(--text3)",
+                              padding: "4px 8px",
+                              background: "rgba(107, 114, 128, 0.05)",
+                              border: "1px solid var(--border)",
+                              borderRadius: "var(--radius)",
+                              display: "inline-flex",
+                              alignItems: "center",
+                            }}
+                          >
+                            Finalized
+                          </span>
+                        ) : (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => calculateRatings(c.id)}
+                            disabled={calculating === c.id}
+                            style={{ color: "var(--accent)" }}
+                          >
+                            {calculating === c.id ? (
+                              <span
+                                className="spinner"
+                                style={{ width: 12, height: 12 }}
+                              />
+                            ) : (
+                              "Calc Ratings"
+                            )}
+                          </button>
+                        )
+                      )}
                       <button
                         className="btn btn-ghost btn-sm"
                         onClick={() => navigate(`/admin/contests/${c.id}/edit`)}

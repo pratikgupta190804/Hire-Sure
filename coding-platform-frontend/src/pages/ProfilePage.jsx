@@ -16,7 +16,15 @@ export function ProfilePage() {
   }, []);
 
   const accepted = subs.filter((s) => s.status === "ACCEPTED").length;
-  const uniqueSolved = new Set(subs.filter((s) => s.status === "ACCEPTED").map((s) => s.problemId)).size;
+  const uniqueSolved = new Set(
+    subs
+      .filter(
+        (s) =>
+          s.status === "ACCEPTED" &&
+          s.problemId != null
+      )
+      .map((s) => s.problemId)
+  ).size;
   const rate = subs.length ? Math.round((accepted / subs.length) * 100) : 0;
 
   return (

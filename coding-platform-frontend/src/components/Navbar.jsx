@@ -11,7 +11,7 @@ export function Navbar({ navigate, path }) {
         onClick={() => navigate("/")}
         style={{ cursor: "pointer" }}
       >
-        ⌥ <span>DSA</span>Platform
+        ⌥ <span>Hire</span>Sure
       </div>
       <div className="nav-links">
         <span

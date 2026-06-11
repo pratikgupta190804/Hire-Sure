@@ -24,6 +24,10 @@ public class Submission {
     @JoinColumn(name = "problem_id", nullable = false)
     private Problem problem;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "contest_id")
+    private Contest contest;
+
     @Column(nullable = false, columnDefinition = "TEXT")
     private String sourceCode;
 

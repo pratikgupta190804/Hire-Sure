@@ -20,7 +20,8 @@ export function useApi() {
         const err = await res.json().catch(() => ({ message: res.statusText }));
         throw new Error(err.message || "Request failed");
       }
-      return res.json();
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
     },
     [token]
   );

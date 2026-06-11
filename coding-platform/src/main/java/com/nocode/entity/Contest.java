@@ -56,6 +56,10 @@ public class Contest {
     @BatchSize(size = 30)
     private List<ContestProblem> problems = new ArrayList<>();
 
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    @Builder.Default
+    private boolean isRatingCalculated = false;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

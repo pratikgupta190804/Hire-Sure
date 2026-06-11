@@ -1,5 +1,21 @@
-export default function ContestProblemList({ problems, navigate }) {
+export default function ContestProblemList({
+  problems,
+  navigate,
+  participating,
+  status,
+}) {
   if (!problems?.length) return null;
+
+  const isLocked = status === "ONGOING" && !participating;
+
+  const handleClick = (slug) => {
+    if (isLocked) {
+      alert("You must join/register for the contest before accessing problems.");
+      return;
+    }
+
+    navigate(`/problems/${slug}`);
+  };
 
   return (
     <div
@@ -13,14 +29,15 @@ export default function ContestProblemList({ problems, navigate }) {
         <div
           key={idx}
           className="card"
-          onClick={() => navigate(`/problems/${problem.slug}`)}
+          onClick={() => handleClick(problem.slug)}
           style={{
             padding: "16px",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            cursor: "pointer",
+            cursor: isLocked ? "not-allowed" : "pointer",
             transition: "all 0.2s ease",
+            opacity: isLocked ? 0.6 : 1,
           }}
         >
           <div
@@ -41,14 +58,33 @@ export default function ContestProblemList({ problems, navigate }) {
               {idx + 1}
             </span>
 
-            <span
+            <div
               style={{
-                fontWeight: 600,
-                color: "var(--text)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
               }}
             >
-              {problem.title}
-            </span>
+              <span
+                style={{
+                  fontWeight: 600,
+                  color: "var(--text)",
+                }}
+              >
+                {problem.title}
+              </span>
+
+              {isLocked && (
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--warning, #f59e0b)",
+                  }}
+                >
+                  🔒 Locked (Join contest to unlock)
+                </span>
+              )}
+            </div>
           </div>
 
           <span

@@ -7,9 +7,14 @@ import com.nocode.entity.Submission;
 import com.nocode.entity.User;
 import com.nocode.enums.SubmissionStatus;
 import com.nocode.exception.ResourceNotFoundException;
+import com.nocode.exception.BadRequestException;
 import com.nocode.repository.ProblemRepository;
 import com.nocode.repository.SubmissionRepository;
 import com.nocode.repository.UserRepository;
+import com.nocode.repository.ContestProblemRepository;
+import com.nocode.repository.ContestParticipationRepository;
+import com.nocode.entity.Contest;
+import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -23,6 +28,8 @@ public class SubmissionService {
     private final SubmissionRepository submissionRepository;
     private final ProblemRepository problemRepository;
     private final UserRepository userRepository;
+    private final ContestProblemRepository contestProblemRepository;
+    private final ContestParticipationRepository contestParticipationRepository;
     private final SubmissionProcessor processor; // separate bean — @Async works correctly
 
     // ── Submit ──────────────────────────────────────────────────────────────
@@ -31,13 +38,36 @@ public class SubmissionService {
     public SubmissionResponse submit(SubmissionRequest request, String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        
+
         Problem problem = problemRepository.findById(request.getProblemId())
                 .orElseThrow(() -> new ResourceNotFoundException("Problem not found"));
+
+        Contest contest = null;
+        if (problem.isContestOnly()) {
+            java.util.Optional<com.nocode.entity.ContestProblem> cpOpt = contestProblemRepository
+                    .findByGlobalProblemSlug(problem.getSlug());
+            if (cpOpt.isPresent()) {
+                com.nocode.entity.ContestProblem cp = cpOpt.get();
+                LocalDateTime now = LocalDateTime.now();
+                Contest c = cp.getContest();
+                boolean contestOngoing = !now.isBefore(c.getStartAt()) && !now.isAfter(c.getEndAt());
+                if (!contestOngoing) {
+                    throw new BadRequestException("Submission are only allowed while the contest is running");
+                }
+                boolean hasJoined = contestParticipationRepository.findByUserIdAndContestId(userId, c.getId())
+                        .isPresent();
+                if (!hasJoined) {
+                    throw new BadRequestException(
+                            "You must register/join the contest to submit. Please join the contest first.");
+                }
+                contest = c;
+            }
+        }
 
         Submission submission = Submission.builder()
                 .user(user)
                 .problem(problem)
+                .contest(contest)
                 .sourceCode(request.getSourceCode())
                 .languageId(request.getLanguageId())
                 .status(SubmissionStatus.PENDING)

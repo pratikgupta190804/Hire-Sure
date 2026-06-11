@@ -4,6 +4,7 @@ import { useApi } from "../hooks/useApi";
 import ContestStatusBadge from "../components/ContestStatusBadge";
 import ContestCountdown from "../components/ContestCountdown";
 import ContestProblemList from "../components/ContestProblemList";
+import ContestLeaderboard from "../components/ContestLeaderboard";
 
 export default function ContestDetailPage({ contestId, navigate }) {
   const api = useApi();
@@ -12,6 +13,7 @@ export default function ContestDetailPage({ contestId, navigate }) {
   const [error, setError] = useState(null);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState(null);
+  const [activeTab, setActiveTab] = useState("details");
 
   useEffect(() => {
     if (!contestId) return;
@@ -171,36 +173,60 @@ export default function ContestDetailPage({ contestId, navigate }) {
         )}
       </div>
 
-      {/* About */}
-      {description && (
-        <div className="card">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>About</h2>
-          <p style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{description}</p>
+      {/* Tabs */}
+      {hasStarted && (
+        <div className="diff-tab" style={{ display: "inline-flex", alignSelf: "flex-start", marginBottom: 10 }}>
+          <button
+            className={activeTab === "details" ? "active" : ""}
+            onClick={() => setActiveTab("details")}
+          >
+            Contest Details
+          </button>
+          <button
+            className={activeTab === "standings" ? "active" : ""}
+            onClick={() => setActiveTab("standings")}
+          >
+            Leaderboard (Standings)
+          </button>
         </div>
       )}
 
-      {/* Rules */}
-      {rules && (
-        <div className="card">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>Rules</h2>
-          <p style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules}</p>
-        </div>
-      )}
+      {activeTab === "details" ? (
+        <>
+          {/* About */}
+          {description && (
+            <div className="card">
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>About</h2>
+              <p style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{description}</p>
+            </div>
+          )}
 
-      {/* Problems */}
-      <div>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: "var(--text)" }}>Problems</h2>
-        {hasStarted ? (
-          <ContestProblemList problems={problems} navigate={navigate} />
-        ) : (
-          <div className="card" style={{ textAlign: "center", padding: 24, background: "rgba(59, 130, 246, 0.02)", borderColor: "rgba(59, 130, 246, 0.1)" }}>
-            <p style={{ color: "var(--blue)", fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
-              Problems will be revealed when the contest starts.
-            </p>
-            {startAt && <ContestCountdown target={startAt} label="Starts in" />}
+          {/* Rules */}
+          {rules && (
+            <div className="card">
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: "var(--text)" }}>Rules</h2>
+              <p style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{rules}</p>
+            </div>
+          )}
+
+          {/* Problems */}
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12, color: "var(--text)" }}>Problems</h2>
+            {hasStarted ? (
+              <ContestProblemList problems={problems} navigate={navigate} participating={participating} status={status} />
+            ) : (
+              <div className="card" style={{ textAlign: "center", padding: 24, background: "rgba(59, 130, 246, 0.02)", borderColor: "rgba(59, 130, 246, 0.1)" }}>
+                <p style={{ color: "var(--blue)", fontSize: 13, fontWeight: 500, marginBottom: 12 }}>
+                  Problems will be revealed when the contest starts.
+                </p>
+                {startAt && <ContestCountdown target={startAt} label="Starts in" />}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      ) : (
+        <ContestLeaderboard contestId={contestId} problems={problems} />
+      )}
     </div>
   );
 }

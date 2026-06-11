@@ -9,9 +9,13 @@ import com.nocode.entity.User;
 import com.nocode.enums.Difficulty;
 import com.nocode.enums.SubmissionStatus;
 import com.nocode.exception.ResourceNotFoundException;
+import com.nocode.exception.BadRequestException;
+import com.nocode.repository.ContestProblemRepository;
+import com.nocode.repository.ContestParticipationRepository;
 import com.nocode.repository.ProblemRepository;
 import com.nocode.repository.SubmissionRepository;
 import com.nocode.repository.UserRepository;
+import com.nocode.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -29,6 +33,8 @@ public class ProblemService {
     private final ProblemRepository problemRepository;
     private final SubmissionRepository submissionRepository;
     private final UserRepository userRepository;
+    private final ContestProblemRepository contestProblemRepository;
+    private final ContestParticipationRepository contestParticipationRepository;
 
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^a-z0-9]+");
 
@@ -60,6 +66,34 @@ public class ProblemService {
     public ProblemDetailResponse getProblemBySlug(String slug) {
         Problem p = problemRepository.findBySlug(slug)
                 .orElseThrow(() -> new ResourceNotFoundException("Problem not found: " + slug));
+        if (p.isContestOnly()) {
+            java.util.Optional<com.nocode.entity.ContestProblem> cpOpt = contestProblemRepository.findByGlobalProblemSlug(slug);
+            if (cpOpt.isPresent()) {
+                com.nocode.entity.ContestProblem cp = cpOpt.get();
+                java.time.LocalDateTime now = java.time.LocalDateTime.now();
+                com.nocode.entity.Contest contest = cp.getContest();
+                
+                if (now.isBefore(contest.getStartAt())) {
+                    throw new BadRequestException("This problem is part of a contest that has not started yet.");
+                }
+                
+                if (now.isBefore(contest.getEndAt())) {
+                    String currentUserId = SecurityUtil.getCurrentUserId().orElse(null);
+                    boolean isAdmin = false;
+                    org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+                    if (auth != null && auth.isAuthenticated()) {
+                        isAdmin = auth.getAuthorities().stream()
+                                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                    }
+                    
+                    if (!isAdmin) {
+                        if (currentUserId == null || !contestParticipationRepository.findByUserIdAndContestId(currentUserId, contest.getId()).isPresent()) {
+                            throw new BadRequestException("You must register/join the contest to view this problem.");
+                        }
+                    }
+                }
+            }
+        }
         return toDetail(p);
     }
 

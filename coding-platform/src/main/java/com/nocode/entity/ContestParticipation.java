@@ -27,6 +27,12 @@ public class ContestParticipation {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    private Integer score;
+    private Integer penaltyTime;
+    private Integer ranking;
+    private Integer ratingBefore;
+    private Integer ratingChange;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime joinedAt;

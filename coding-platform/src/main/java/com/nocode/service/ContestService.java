@@ -18,6 +18,20 @@ import com.nocode.repository.ContestParticipationRepository;
 import com.nocode.repository.ContestRepository;
 import com.nocode.repository.ProblemRepository;
 import com.nocode.repository.UserRepository;
+import com.nocode.repository.SubmissionRepository;
+import com.nocode.entity.Submission;
+import com.nocode.enums.SubmissionStatus;
+import com.nocode.dto.response.ContestLeaderboardResponse;
+import com.nocode.dto.response.LeaderboardRow;
+import com.nocode.dto.response.LeaderboardProblemStatus;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Optional;
+import java.util.Comparator;
+import java.time.Duration;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -42,11 +56,12 @@ public class ContestService {
     private final ContestParticipationRepository contestParticipationRepository;
     private final UserRepository userRepository;
     private final ProblemRepository problemRepository;
+    private final SubmissionRepository submissionRepository;
 
     private static final Pattern NON_ALPHANUMERIC = Pattern.compile("[^a-z0-9]+");
 
     @Transactional(readOnly = true)
-    public Page<ContestSummaryResponse> listContests(Pageable pageable, ContestStatus status) {
+    public Page<ContestSummaryResponse> listContests(Pageable pageable, ContestStatus status, String userId) {
         // Fix: capture a single `now` and pass it through to statusFor()
         // so the filter predicate and the status label stay in sync.
         LocalDateTime now = LocalDateTime.now();
@@ -60,7 +75,16 @@ public class ContestService {
         } else {
             page = contestRepository.findAll(pageable);
         }
-        return page.map(c -> toSummary(c, false, now));
+
+        // Optimize N+1 queries by fetching registered contest IDs for this user in one query
+        List<String> contestIds = page.getContent().stream().map(Contest::getId).toList();
+        Set<String> participatedContestIds = new HashSet<>();
+        if (userId != null && !contestIds.isEmpty()) {
+            participatedContestIds.addAll(contestParticipationRepository.findJoinedContestIds(userId, contestIds));
+        }
+
+        final Set<String> finalParticipatedIds = participatedContestIds;
+        return page.map(c -> toSummary(c, finalParticipatedIds.contains(c.getId()), now));
     }
 
     @Transactional(readOnly = true)
@@ -71,6 +95,165 @@ public class ContestService {
         boolean participating = userId != null && isParticipating(userId, id);
         boolean includeProblems = !now.isBefore(contest.getStartAt());
         return toDetail(contest, includeProblems, participating, now);
+    }
+
+    @Transactional(readOnly = true)
+    public ContestLeaderboardResponse getLeaderboard(String contestId) {
+        Contest contest = contestRepository.findById(contestId)
+                .orElseThrow(() -> new ResourceNotFoundException("Contest not found: " + contestId));
+
+        List<ContestProblem> contestProblems = contest.getProblems();
+        List<String> problemIds = new ArrayList<>();
+        Map<String, ContestProblem> problemIdToContestProblemMap = new HashMap<>();
+
+        for (ContestProblem cp : contestProblems) {
+            Optional<Problem> gpOpt = problemRepository.findBySlug(cp.getGlobalProblemSlug());
+            if (gpOpt.isPresent()) {
+                String id = gpOpt.get().getId();
+                problemIds.add(id);
+                problemIdToContestProblemMap.put(id, cp);
+            }
+        }
+
+        // 1. Fetch all submissions during the contest duration for these problems
+        List<Submission> submissions = submissionRepository.findContestSubmissions(
+                problemIds, contest.getStartAt(), contest.getEndAt());
+
+        // 2. Fetch all registered participants
+        List<ContestParticipation> participations = contestParticipationRepository.findByContestId(contestId);
+        Set<String> participantUserIds = participations.stream()
+                .map(p -> p.getUser().getId())
+                .collect(Collectors.toSet());
+
+        // Group submissions by user ID
+        Map<String, List<Submission>> userSubmissions = submissions.stream()
+                .filter(s -> participantUserIds.contains(s.getUser().getId()))
+                .collect(Collectors.groupingBy(s -> s.getUser().getId()));
+
+        List<LeaderboardRow> rows = new ArrayList<>();
+
+        if (contest.isRatingCalculated()) {
+            // Ratings calculated: Fetch finalized standings from ContestParticipation
+            List<ContestParticipation> sortedParticipations = contestParticipationRepository
+                    .findByContestIdOrderByRankingAsc(contestId);
+
+            for (ContestParticipation cp : sortedParticipations) {
+                String userId = cp.getUser().getId();
+                List<Submission> userSubs = userSubmissions.getOrDefault(userId, List.of());
+                List<LeaderboardProblemStatus> probStatuses = calculateProblemStatuses(problemIds, problemIdToContestProblemMap, userSubs, contest.getStartAt());
+
+                rows.add(LeaderboardRow.builder()
+                        .rank(cp.getRanking() != null ? cp.getRanking() : 1)
+                        .userId(userId)
+                        .username(cp.getUser().getUsername())
+                        .score(cp.getScore() != null ? cp.getScore() : 0)
+                        .penaltyTimeSeconds(cp.getPenaltyTime() != null ? cp.getPenaltyTime() : 0)
+                        .ratingBefore(cp.getRatingBefore())
+                        .ratingChange(cp.getRatingChange())
+                        .problemStatuses(probStatuses)
+                        .build());
+            }
+        } else {
+            // Live/ongoing or before finalization: Calculate leaderboard dynamically
+            for (ContestParticipation cp : participations) {
+                String userId = cp.getUser().getId();
+                List<Submission> userSubs = userSubmissions.getOrDefault(userId, List.of());
+                List<LeaderboardProblemStatus> probStatuses = calculateProblemStatuses(problemIds, problemIdToContestProblemMap, userSubs, contest.getStartAt());
+
+                int totalScore = 0;
+                long totalPenaltySeconds = 0;
+                for (LeaderboardProblemStatus ps : probStatuses) {
+                    if (ps.isSolved()) {
+                        totalScore += ps.getScore();
+                        totalPenaltySeconds += ps.getTimeToSolveSeconds() + (ps.getFailedAttempts() * 300L);
+                    }
+                }
+
+                rows.add(LeaderboardRow.builder()
+                        .userId(userId)
+                        .username(cp.getUser().getUsername())
+                        .score(totalScore)
+                        .penaltyTimeSeconds(totalPenaltySeconds)
+                        .problemStatuses(probStatuses)
+                        .build());
+            }
+
+            // Sort by score desc, penalty time asc
+            rows.sort((a, b) -> {
+                if (a.getScore() != b.getScore()) {
+                    return Integer.compare(b.getScore(), a.getScore());
+                }
+                return Long.compare(a.getPenaltyTimeSeconds(), b.getPenaltyTimeSeconds());
+            });
+
+            // Assign ranks
+            int currentRank = 1;
+            for (int i = 0; i < rows.size(); i++) {
+                if (i > 0) {
+                    LeaderboardRow current = rows.get(i);
+                    LeaderboardRow prev = rows.get(i - 1);
+                    if (current.getScore() != prev.getScore() || current.getPenaltyTimeSeconds() != prev.getPenaltyTimeSeconds()) {
+                        currentRank = i + 1;
+                    }
+                }
+                rows.get(i).setRank(currentRank);
+            }
+        }
+
+        return new ContestLeaderboardResponse(rows);
+    }
+
+    private List<LeaderboardProblemStatus> calculateProblemStatuses(
+            List<String> problemIds,
+            Map<String, ContestProblem> problemIdToContestProblemMap,
+            List<Submission> userSubs,
+            LocalDateTime contestStart) {
+
+        List<LeaderboardProblemStatus> probStatuses = new ArrayList<>();
+
+        for (String problemId : problemIds) {
+            ContestProblem cp = problemIdToContestProblemMap.get(problemId);
+            List<Submission> problemSubs = userSubs.stream()
+                    .filter(s -> s.getProblem().getId().equals(problemId))
+                    .sorted(Comparator.comparing(Submission::getSubmittedAt))
+                    .toList();
+
+            Optional<Submission> firstAcOpt = problemSubs.stream()
+                    .filter(s -> s.getStatus() == SubmissionStatus.ACCEPTED)
+                    .findFirst();
+
+            if (firstAcOpt.isPresent()) {
+                Submission firstAc = firstAcOpt.get();
+                long solveTimeSec = Duration.between(contestStart, firstAc.getSubmittedAt()).toSeconds();
+
+                long failedAttempts = problemSubs.stream()
+                        .filter(s -> s.getSubmittedAt().isBefore(firstAc.getSubmittedAt()))
+                        .filter(s -> s.getStatus() != SubmissionStatus.ACCEPTED && s.getStatus() != SubmissionStatus.PENDING && s.getStatus() != SubmissionStatus.PROCESSING)
+                        .count();
+
+                probStatuses.add(LeaderboardProblemStatus.builder()
+                        .problemId(problemId)
+                        .solved(true)
+                        .score(cp.getPoints())
+                        .timeToSolveSeconds(solveTimeSec)
+                        .failedAttempts((int) failedAttempts)
+                        .build());
+            } else {
+                long failedAttempts = problemSubs.stream()
+                        .filter(s -> s.getStatus() != SubmissionStatus.PENDING && s.getStatus() != SubmissionStatus.PROCESSING)
+                        .count();
+
+                probStatuses.add(LeaderboardProblemStatus.builder()
+                        .problemId(problemId)
+                        .solved(false)
+                        .score(0)
+                        .timeToSolveSeconds(0)
+                        .failedAttempts((int) failedAttempts)
+                        .build());
+            }
+        }
+
+        return probStatuses;
     }
 
     @Transactional(readOnly = true)
@@ -254,6 +437,7 @@ public class ContestService {
                 // replace with @Formula on Contest once you add that column.
                 .problemCount(contest.getProblems().size())
                 .participating(participating)
+                .ratingCalculated(contest.isRatingCalculated())
                 .createdAt(contest.getCreatedAt())
                 .build();
     }
