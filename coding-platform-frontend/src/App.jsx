@@ -23,6 +23,7 @@ import { ContestFormPage } from "./pages/admin/ContestFormPage";
 
 import ContestListPage from "./pages/ContestListPage";
 import ContestDetailPage from "./pages/ContestDetailPage";
+import JobsPage from "./pages/JobsPage";
 
 function Router() {
   const { path, navigate } = useRoute();
@@ -65,6 +66,15 @@ function Router() {
       component: () =>
         user ? (
           <ProfilePage navigate={navigate} />
+        ) : (
+          <AuthPage navigate={navigate} mode="login" />
+        ),
+    },
+    {
+      pattern: "/jobs",
+      component: () =>
+        user ? (
+          <JobsPage navigate={navigate} />
         ) : (
           <AuthPage navigate={navigate} mode="login" />
         ),

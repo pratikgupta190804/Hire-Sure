@@ -6,7 +6,7 @@ export function LandingPage({ navigate }) {
     >
       <div style={{ textAlign: "center", maxWidth: 640, padding: "0 24px" }}>
         <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--accent)", letterSpacing: "0.15em", textTransform: "uppercase", marginBottom: 20 }}>
-          AI-Powered Coding Platform
+          AI-Powered Coding & Career Platform
         </div>
         <h1 style={{ fontSize: 52, fontWeight: 700, lineHeight: 1.1, marginBottom: 20 }}>
           Code. Learn.<br />
