@@ -3,7 +3,7 @@ import logging
 import asyncio
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +12,15 @@ from schemas.problem import GenerateRequest, GenerateResponse, GeneratedProblem,
 from core.pipeline import problem_pipeline
 from core.publisher import publish_problem
 from core.state import ProblemState
+
+# Resume and job matchmaking imports
+from fastapi import UploadFile, File
+from pydantic import BaseModel
+from schemas.resume import ExtractedSkills, JobMatchResponse
+from agents.resume_agent import extract_text_from_file, extract_skills_from_text
+from core.job_fetcher import retrieve_all_jobs
+from core.matchmaker import match_jobs_with_llm
+from core.interview import interview_websocket_endpoint
 
 # In-memory store for previewed problems waiting for admin approval
 # key: preview_id, value: GeneratedProblem
@@ -410,6 +419,58 @@ async def get_optimization_stats():
         "cache": cache_info,
         "rate_limiters": rate_limiters
     }
+
+
+# ── Resume & Job Matchmaking Routes ───────────────────────────────────────────
+
+class MatchRequest(BaseModel):
+    skills: list[str]
+    role: str = "Software Engineer"
+
+@app.post("/agent/resume/extract", response_model=ExtractedSkills)
+async def extract_resume(file: UploadFile = File(...)):
+    """
+    Upload a resume (PDF/DOCX/TXT), extract its text, 
+    and identify skills, experience level, preferred roles, and a summary.
+    """
+    try:
+        content = await file.read()
+        text = extract_text_from_file(content, file.filename)
+        if not text:
+            raise HTTPException(status_code=400, detail="Could not extract text from file. Ensure it is not empty or corrupted.")
+        
+        extracted = extract_skills_from_text(text)
+        return extracted
+    except Exception as e:
+        logger.error(f"Resume extraction endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/agent/jobs/match", response_model=JobMatchResponse)
+async def match_jobs(request: MatchRequest):
+    """
+    Search and match jobs based on a list of skills and target role.
+    """
+    try:
+        # 1. Fetch raw jobs (combines JSearch API + WWR RSS feed)
+        jobs = retrieve_all_jobs(request.skills, request.role)
+        
+        # 2. Run matchmaking engine (LLM evaluation on top 5 matches + heuristic scoring on rest)
+        matches = match_jobs_with_llm(request.skills, jobs)
+        
+        return JobMatchResponse(
+            success=True,
+            skills=request.skills,
+            matches=matches,
+            message=f"Successfully matched {len(matches)} jobs"
+        )
+    except Exception as e:
+        logger.error(f"Job matchmaking endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/api/interview/ws")
+async def websocket_route(websocket: WebSocket):
+    await interview_websocket_endpoint(websocket)
 
 
 @app.get("/")

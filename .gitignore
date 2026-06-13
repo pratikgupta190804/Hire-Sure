@@ -1,0 +1,38 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# IDE / Editor configuration
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+*.iws
+*.ipr
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Frontend dependencies and builds
+node_modules/
+dist/
+dist-ssr/
+
+# Java / Spring Boot builds
+target/
+.mvn/wrapper/maven-wrapper.jar

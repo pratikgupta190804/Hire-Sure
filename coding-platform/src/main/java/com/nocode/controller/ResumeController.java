@@ -45,9 +45,9 @@ public class ResumeController {
     }
 
     @GetMapping("/jobs/matches")
-    public ResponseEntity<Map<String, Object>> getJobMatches() {
+    public ResponseEntity<Map<String, Object>> getJobMatches(@RequestParam(value = "role", required = false) String role) {
         String userId = SecurityUtil.requireCurrentUserId();
-        Map<String, Object> matches = resumeService.getJobMatches(userId);
+        Map<String, Object> matches = resumeService.getJobMatches(userId, role);
         return ResponseEntity.ok(matches);
     }
 }

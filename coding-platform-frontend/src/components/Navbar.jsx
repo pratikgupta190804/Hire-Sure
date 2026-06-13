@@ -34,6 +34,14 @@ export function Navbar({ navigate, path }) {
         </span>
         {user && (
           <span
+            className={isActive("/interview")}
+            onClick={() => navigate("/interview")}
+          >
+            AI Interview
+          </span>
+        )}
+        {user && (
+          <span
             className={isActive("/submissions")}
             onClick={() => navigate("/submissions")}
           >

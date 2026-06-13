@@ -1,0 +1,11 @@
+# Python env & cache
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+env/
+
+# Service credentials and config
+.env
+*.env
+.env.*

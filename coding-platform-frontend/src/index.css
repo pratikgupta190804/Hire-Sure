@@ -196,3 +196,18 @@ body {
 .status-compiled {
   @apply badge bg-blue-100 text-blue-800;
 }
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.3;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}

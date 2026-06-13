@@ -34,6 +34,18 @@ public class JwtUtil {
                 .compact();
     }
 
+    public String generateShortLivedToken(String userId, String email, String role) {
+        return Jwts.builder()
+                .subject(userId)
+                .claim("email", email)
+                .claim("role", role)
+                .claim("purpose", "voice_interview")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 3600000)) // 1 hour (3600000 ms)
+                .signWith(key)
+                .compact();
+    }
+
     public String extractUserId(String token) {
         return parseClaims(token).getSubject();
     }

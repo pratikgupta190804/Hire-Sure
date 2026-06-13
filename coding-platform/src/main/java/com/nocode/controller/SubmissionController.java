@@ -12,6 +12,9 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import com.nocode.dto.request.ExecuteRequest;
+import com.nocode.service.ExecutionResult;
+import com.nocode.service.ExecutionService;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -20,6 +23,19 @@ import org.springframework.web.bind.annotation.*;
 public class SubmissionController {
 
     private final SubmissionService submissionService;
+    private final ExecutionService executionService;
+
+    // POST /api/submissions/execute
+    @PostMapping("/execute")
+    public ResponseEntity<ExecutionResult> execute(
+            @Valid @RequestBody ExecuteRequest request) {
+        ExecutionResult result = executionService.execute(
+                request.getSourceCode(),
+                request.getLanguageId(),
+                request.getStdin()
+        );
+        return ResponseEntity.ok(result);
+    }
 
     // POST /api/submissions
     @PostMapping

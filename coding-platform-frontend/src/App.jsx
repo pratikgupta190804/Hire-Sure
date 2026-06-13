@@ -24,6 +24,7 @@ import { ContestFormPage } from "./pages/admin/ContestFormPage";
 import ContestListPage from "./pages/ContestListPage";
 import ContestDetailPage from "./pages/ContestDetailPage";
 import JobsPage from "./pages/JobsPage";
+import { VoiceInterview } from "./pages/VoiceInterview";
 
 function Router() {
   const { path, navigate } = useRoute();
@@ -75,6 +76,15 @@ function Router() {
       component: () =>
         user ? (
           <JobsPage navigate={navigate} />
+        ) : (
+          <AuthPage navigate={navigate} mode="login" />
+        ),
+    },
+    {
+      pattern: "/interview",
+      component: () =>
+        user ? (
+          <VoiceInterview navigate={navigate} />
         ) : (
           <AuthPage navigate={navigate} mode="login" />
         ),

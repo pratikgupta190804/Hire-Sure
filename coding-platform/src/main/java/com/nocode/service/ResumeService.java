@@ -100,7 +100,7 @@ public class ResumeService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getJobMatches(String userId) {
+    public Map<String, Object> getJobMatches(String userId, String role) {
         Resume resume = resumeRepository.findByUserId(userId)
                 .orElseThrow(() -> new RuntimeException("Resume not uploaded yet"));
 
@@ -116,6 +116,13 @@ public class ResumeService {
         // Prepare request body for python matchmaking endpoint
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("skills", resume.getSkills());
+        if (role != null && !role.trim().isEmpty()) {
+            requestBody.put("role", role.trim());
+        } else if (resume.getPreferredRoles() != null && !resume.getPreferredRoles().isEmpty()) {
+            requestBody.put("role", resume.getPreferredRoles().get(0));
+        } else {
+            requestBody.put("role", "Software Engineer");
+        }
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
