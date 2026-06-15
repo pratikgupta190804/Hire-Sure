@@ -100,6 +100,7 @@ export function ProblemPage({ navigate, slug }) {
   const [hintIdx, setHintIdx] = useState(-1);
   const [error, setError] = useState(null);
 
+
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -290,7 +291,15 @@ export function ProblemPage({ navigate, slug }) {
       </div>
     );
 
-  const hints = problem.hints || [];
+  let hints = [];
+
+  try {
+    hints = problem?.hints
+      ? JSON.parse(problem.hints)
+      : [];
+  } catch (e) {
+    console.error("Failed to parse hints:", e);
+  }
 
   return (
     <div className="editor-layout page">

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useToast } from "../../hooks/useToast";
 import { diffBadge } from "../../utils/helpers";
 import { AGENT } from "../../utils/constants";
+import { useApi } from "../../hooks/useApi";
 import { EditPreviewForm } from "./EditPreviewForm";
 
 export function AIGeneratorPage() {
@@ -15,23 +16,24 @@ export function AIGeneratorPage() {
   const [previews, setPreviews] = useState([]);
   const [loadingPreviews, setLoadingPreviews] = useState(true);
   const [editingId, setEditingId] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [saving, setSaving] = useState(null);
   const [discarding, setDiscarding] = useState(null);
   const { show } = useToast();
+  const api = useApi();
 
   const loadPreviews = useCallback(async () => {
     setLoadingPreviews(true);
     try {
-      const r = await fetch(`${AGENT}/generate/preview/list`);
-      const d = await r.json();
+      const d = await api("/generate/preview/list", {}, AGENT);
       setPreviews(d.previews || []);
     } catch {
       setPreviews([]);
     } finally {
       setLoadingPreviews(false);
     }
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     loadPreviews();
@@ -45,13 +47,12 @@ export function AIGeneratorPage() {
       if (!body.topic) delete body.topic;
       if (!body.difficulty) delete body.difficulty;
       if (!body.company_style) delete body.company_style;
-      const r = await fetch(`${AGENT}/generate/preview`, {
+      
+      const d = await api("/generate/preview", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) throw new Error("Agent service error");
-      const d = await r.json();
+        body: body,
+      }, AGENT);
+      
       show(
         `Generated ${d.problems_generated} problem(s)! Review below.`,
         "success",
@@ -66,8 +67,7 @@ export function AIGeneratorPage() {
 
   const startEdit = async (previewId) => {
     try {
-      const r = await fetch(`${AGENT}/generate/preview/list`);
-      const d = await r.json();
+      const d = await api("/generate/preview/list", {}, AGENT);
       const preview = (d.previews || []).find(
         (p) => p.preview_id === previewId,
       );
@@ -85,12 +85,10 @@ export function AIGeneratorPage() {
   const saveEdited = async (previewId) => {
     setSaving(previewId);
     try {
-      const saveRes = await fetch(`${AGENT}/generate/save/${previewId}`, {
+      await api(`/generate/save/${previewId}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editForm),
-      });
-      if (!saveRes.ok) throw new Error(await saveRes.text());
+        body: editForm,
+      }, AGENT);
       show("Problem saved to database!", "success");
       setEditingId(null);
       setEditForm(null);
@@ -106,9 +104,9 @@ export function AIGeneratorPage() {
     if (!confirm("Discard this problem?")) return;
     setDiscarding(previewId);
     try {
-      await fetch(`${AGENT}/generate/preview/${previewId}`, {
+      await api(`/generate/preview/${previewId}`, {
         method: "DELETE",
-      });
+      }, AGENT);
       show("Problem discarded", "success");
       loadPreviews();
     } catch {
@@ -121,10 +119,9 @@ export function AIGeneratorPage() {
   const saveDirectly = async (previewId) => {
     setSaving(previewId);
     try {
-      const r = await fetch(`${AGENT}/generate/save/${previewId}`, {
+      await api(`/generate/save/${previewId}`, {
         method: "POST",
-      });
-      if (!r.ok) throw new Error("Failed to save");
+      }, AGENT);
       show("Problem saved to database!", "success");
       loadPreviews();
     } catch (e) {
@@ -312,15 +309,28 @@ export function AIGeneratorPage() {
                         marginBottom: 12,
                       }}
                     >
-                      <div>
+                      <div
+                        style={{ cursor: "pointer", flex: 1 }}
+                        onClick={() =>
+                          setExpandedId(
+                            expandedId === p.preview_id ? null : p.preview_id
+                          )
+                        }
+                      >
                         <div
                           style={{
                             fontWeight: 600,
                             fontSize: 15,
                             marginBottom: 4,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
                           }}
                         >
                           {p.title}
+                          <span style={{ fontSize: 11, color: "var(--text3)" }}>
+                            {expandedId === p.preview_id ? "▼ Collapse" : "▶ Expand Details"}
+                          </span>
                         </div>
                         <div style={{ display: "flex", gap: 8 }}>
                           {diffBadge(p.difficulty)}
@@ -372,6 +382,96 @@ export function AIGeneratorPage() {
                         </button>
                       </div>
                     </div>
+
+                    {expandedId === p.preview_id && (
+                      <div
+                        style={{
+                          marginTop: 16,
+                          borderTop: "1px solid var(--border)",
+                          paddingTop: 16,
+                        }}
+                      >
+                        <div style={{ marginBottom: 12 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>
+                            Description:
+                          </span>
+                          <p
+                            style={{
+                              fontSize: 13,
+                              color: "var(--text2)",
+                              whiteSpace: "pre-wrap",
+                              marginTop: 4,
+                            }}
+                          >
+                            {p.description}
+                          </p>
+                        </div>
+
+                        {p.reference_solution && (
+                          <div style={{ marginBottom: 12 }}>
+                            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>
+                              Reference Python Solution (Verified):
+                            </span>
+                            <pre
+                              style={{
+                                background: "var(--bg3)",
+                                padding: 12,
+                                borderRadius: 6,
+                                overflowX: "auto",
+                                fontSize: 12,
+                                fontFamily: "var(--mono)",
+                                border: "1px solid var(--border)",
+                                marginTop: 4,
+                              }}
+                            >
+                              {p.reference_solution}
+                            </pre>
+                          </div>
+                        )}
+
+                        {p.test_cases && p.test_cases.length > 0 && (
+                          <div>
+                            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>
+                              Verified Test Cases ({p.test_cases.length}):
+                            </span>
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                marginTop: 4,
+                              }}
+                            >
+                              {p.test_cases.map((tc, idx) => (
+                                <div
+                                  key={idx}
+                                  style={{
+                                    fontSize: 12,
+                                    background: "var(--bg3)",
+                                    padding: "6px 10px",
+                                    borderRadius: 4,
+                                    fontFamily: "var(--mono)",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    alignItems: "center",
+                                  }}
+                                >
+                                  <span style={{ color: "var(--text2)" }}>
+                                    Input: {tc.input}
+                                  </span>
+                                  <span style={{ color: "var(--green)" }}>
+                                    → Output: {tc.expected_output}
+                                  </span>
+                                  <span style={{ fontSize: 10, color: "var(--text3)" }}>
+                                    {tc.hidden ? "👁 Hidden" : "👁 Public"}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

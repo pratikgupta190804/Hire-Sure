@@ -25,11 +25,13 @@ class GeneratedProblem(BaseModel):
     output_format: str = Field(description="Description of expected output format")
     sample_input: str = Field(description="One visible sample input")
     sample_output: str = Field(description="Expected output for sample input")
-    test_cases: list[TestCase] = Field(description="5-10 test cases including edge cases")
+    test_cases: list[TestCase] = Field(default_factory=list, description="5-10 test cases including edge cases")
     hints: list[str] = Field(description="3 progressive hints from vague to specific")
     topic_tags: list[str] = Field(description="e.g. ['arrays', 'hash-map', 'two-pointers']")
     time_complexity: str = Field(description="Expected optimal solution e.g. O(n)")
     space_complexity: str = Field(description="Expected optimal solution e.g. O(n)")
+    reference_solution: Optional[str] = Field(None, description="Executable reference Python solution code used for test case validation")
+    test_inputs: Optional[list[str]] = Field(None, description="Raw input strings for generating/validating test cases")
 
 
 class ValidationResult(BaseModel):

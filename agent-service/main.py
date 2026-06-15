@@ -1,9 +1,13 @@
 import os
 import logging
 import asyncio
+from typing import Optional
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket
+
+load_dotenv()
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +16,7 @@ from schemas.problem import GenerateRequest, GenerateResponse, GeneratedProblem,
 from core.pipeline import problem_pipeline
 from core.publisher import publish_problem
 from core.state import ProblemState
+from core.auth import verify_admin_token
 
 # Resume and job matchmaking imports
 from fastapi import UploadFile, File
@@ -26,7 +31,7 @@ from core.interview import interview_websocket_endpoint
 # key: preview_id, value: GeneratedProblem
 preview_store: dict[str, GeneratedProblem] = {}
 
-load_dotenv()
+# Environment already loaded at the top of main.py
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -89,7 +94,7 @@ app.add_middleware(
 
 # ── Core pipeline runner ───────────────────────────────────────────────────────
 
-async def run_pipeline(request: GenerateRequest, publish: bool = True) -> list:
+async def run_pipeline(request: GenerateRequest, publish: bool = True, auth_token: str = None) -> list:
     """Runs the LangGraph pipeline and optionally publishes to Spring Boot."""
     problems = []
 
@@ -100,10 +105,6 @@ async def run_pipeline(request: GenerateRequest, publish: bool = True) -> list:
             "request": request,
             "draft_problem": None,
             "validation": None,
-            "refined_problem": None,
-            "test_cases_added": False,
-            "difficulty_confirmed": False,
-            "hints_added": False,
             "final_problem": None,
             "retry_count": 0,
             "error": None,
@@ -127,7 +128,7 @@ async def run_pipeline(request: GenerateRequest, publish: bool = True) -> list:
         )
 
         if publish:
-            await publish_problem(problem)
+            await publish_problem(problem, auth_token=auth_token)
 
         problems.append(problem)
 
@@ -140,14 +141,14 @@ async def run_pipeline(request: GenerateRequest, publish: bool = True) -> list:
 # ── API Routes ─────────────────────────────────────────────────────────────────
 
 @app.post("/generate", response_model=GenerateResponse)
-async def generate_problem(request: GenerateRequest):
+async def generate_problem(request: GenerateRequest, token: str = Depends(verify_admin_token)):
     """
     Generate one or more problems and publish to Spring Boot.
 
     Called by Spring Boot admin panel or directly via API.
     """
     try:
-        problems = await run_pipeline(request, publish=True)
+        problems = await run_pipeline(request, publish=True, auth_token=token)
 
         return GenerateResponse(
             success=len(problems) > 0,
@@ -161,7 +162,7 @@ async def generate_problem(request: GenerateRequest):
 
 
 @app.post("/generate/preview", response_model=GenerateResponse)
-async def preview_problem(request: GenerateRequest):
+async def preview_problem(request: GenerateRequest, token: str = Depends(verify_admin_token)):
     """
     Generate problems WITHOUT publishing to Spring Boot.
     Each problem gets a preview_id you can use to save it later via /generate/save/{preview_id}.
@@ -191,7 +192,7 @@ async def preview_problem(request: GenerateRequest):
 
 
 @app.get("/generate/preview/list")
-async def list_previews():
+async def list_previews(token: str = Depends(verify_admin_token)):
     """List all problems currently in the preview store waiting for admin action."""
     import json
     return {
@@ -209,6 +210,7 @@ async def list_previews():
                 "sample_output": p.sample_output,
                 "time_complexity": p.time_complexity,
                 "space_complexity": p.space_complexity,
+                "reference_solution": p.reference_solution,
                 "hints": json.loads(p.hints) if isinstance(p.hints, str) else p.hints if p.hints else [],
                 "topic_tags": json.loads(p.topic_tags) if isinstance(p.topic_tags, str) else p.topic_tags if p.topic_tags else [],
                 "test_cases": [
@@ -222,28 +224,35 @@ async def list_previews():
 
 
 @app.post("/generate/save/{preview_id}")
-async def save_preview(preview_id: str):
+async def save_preview(
+    preview_id: str,
+    updated_problem: Optional[GeneratedProblem] = None,
+    token: str = Depends(verify_admin_token)
+):
     """
     Save a specific previewed problem to Spring Boot / PostgreSQL.
     Call this after reviewing the output of /generate/preview.
     """
-    problem = preview_store.get(preview_id)
+    problem = updated_problem
+    if not problem:
+        problem = preview_store.get(preview_id)
+        
     if not problem:
         raise HTTPException(
             status_code=404,
             detail=f"Preview ID '{preview_id}' not found. It may have already been saved or expired."
         )
 
-    success = await publish_problem(problem)
+    success = await publish_problem(problem, auth_token=token)
     if success:
-        del preview_store[preview_id]  # remove from store after saving
+        preview_store.pop(preview_id, None)  # remove from store after saving
         return {"success": True, "message": f"Problem '{problem.title}' saved to database."}
     else:
         raise HTTPException(status_code=502, detail="Failed to save to Spring Boot. Check Spring Boot logs.")
 
 
 @app.delete("/generate/preview/{preview_id}")
-async def discard_preview(preview_id: str):
+async def discard_preview(preview_id: str, token: str = Depends(verify_admin_token)):
     """Discard a previewed problem without saving it."""
     if preview_id not in preview_store:
         raise HTTPException(status_code=404, detail="Preview ID not found.")
@@ -253,7 +262,11 @@ async def discard_preview(preview_id: str):
 
 
 @app.post("/generate/bulk", response_model=GenerateResponse)
-async def bulk_generate(request: GenerateRequest, background_tasks: BackgroundTasks):
+async def bulk_generate(
+    request: GenerateRequest,
+    background_tasks: BackgroundTasks,
+    token: str = Depends(verify_admin_token)
+):
     """
     Generate many problems in the background. Returns immediately.
     Check logs for progress.
@@ -261,7 +274,7 @@ async def bulk_generate(request: GenerateRequest, background_tasks: BackgroundTa
     if request.count > 10:
         raise HTTPException(status_code=400, detail="Max 10 problems per request")
 
-    background_tasks.add_task(run_pipeline, request, True)
+    background_tasks.add_task(run_pipeline, request, True, token)
 
     return GenerateResponse(
         success=True,

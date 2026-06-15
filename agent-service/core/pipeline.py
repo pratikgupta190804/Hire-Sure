@@ -4,8 +4,6 @@ from langgraph.graph import StateGraph, END
 from core.state import ProblemState
 from agents.generator import generator_agent
 from agents.validator import validator_agent
-from agents.test_case_generator import test_case_generator_agent
-from agents.hint_generator import hint_generator_agent
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +15,17 @@ def should_retry_or_proceed(state: ProblemState) -> str:
     """
     Routing function after validation.
     If quality score is too low AND we haven't hit max retries, regenerate.
-    Otherwise proceed to test case generation.
+    Otherwise complete the pipeline.
     """
     validation = state.get("validation")
     retry_count = state.get("retry_count", 0)
 
+    # If an error occurred and we have retries left, trigger a retry
     if state.get("error"):
-        logger.warning(f"Error in state, proceeding anyway: {state['error']}")
+        if retry_count < MAX_RETRIES:
+            logger.warning(f"Error in state, retrying (attempt {retry_count + 1}/{MAX_RETRIES}): {state['error']}")
+            return "retry"
+        logger.warning(f"Error in state, max retries reached. Proceeding to END: {state['error']}")
         return "proceed"
 
     if validation and validation.quality_score < QUALITY_THRESHOLD and retry_count < MAX_RETRIES:
@@ -38,27 +40,28 @@ def should_retry_or_proceed(state: ProblemState) -> str:
 
 def increment_retry(state: ProblemState) -> ProblemState:
     """Increments retry counter before regenerating."""
-    return {**state, "retry_count": state.get("retry_count", 0) + 1, "draft_problem": None}
+    # Retain the error in the state so the generator can use it for self-correction,
+    # but clear draft_problem to regenerate.
+    return {
+        **state,
+        "retry_count": state.get("retry_count", 0) + 1,
+        "draft_problem": None
+    }
 
 
 def build_pipeline():
     """
     Builds and compiles the LangGraph pipeline.
 
-    Flow (OPTIMIZED - removed difficulty_analyzer):
-        generate → validate → [retry? → generate again] → test_cases → hints → END
-    
-    This saves 1 LLM call per problem (20% reduction).
-    Difficulty is already provided by generator, no need for separate analysis.
+    Flow (OPTIMIZED):
+        generate → validate (programmatic) → [retry? → generate again] → END
     """
     graph = StateGraph(ProblemState)
 
-    # Register agent nodes (removed difficulty_analyzer for efficiency)
+    # Register nodes
     graph.add_node("generate",        generator_agent)
     graph.add_node("validate",        validator_agent)
     graph.add_node("increment_retry", increment_retry)
-    graph.add_node("test_cases",      test_case_generator_agent)
-    graph.add_node("hints",           hint_generator_agent)
 
     # Entry point
     graph.set_entry_point("generate")
@@ -66,16 +69,14 @@ def build_pipeline():
     # Linear edges
     graph.add_edge("generate", "validate")
     graph.add_edge("increment_retry", "generate")
-    graph.add_edge("test_cases", "hints")  # Skip difficulty, go straight to hints
-    graph.add_edge("hints", END)
 
-    # Conditional edge after validation: retry or proceed
+    # Conditional edge after validation: retry or complete
     graph.add_conditional_edges(
         "validate",
         should_retry_or_proceed,
         {
             "retry":   "increment_retry",
-            "proceed": "test_cases",
+            "proceed": END,
         }
     )
 

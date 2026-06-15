@@ -36,24 +36,27 @@ def build_spring_payload(problem: GeneratedProblem) -> dict:
     }
 
 
-async def publish_problem(problem: GeneratedProblem, admin_email: str = None) -> bool:
+async def publish_problem(problem: GeneratedProblem, auth_token: str = None) -> bool:
     """
     POSTs a generated problem to Spring Boot.
-    Automatically authenticates using configured admin credentials.
+    Can use a forwarded client JWT token or authenticate automatically
+    using the configured service admin credentials in .env.
     
     Args:
         problem: GeneratedProblem to publish
-        admin_email: Admin email to authenticate as. If None, uses primary admin.
+        auth_token: Optional client JWT token to forward.
     
     Returns:
         True on success, False on failure.
     """
-    try:
-        # Get fresh token (cached if valid)
-        token = await authenticator.get_token(admin_email)
-    except Exception as e:
-        logger.error(f"Failed to authenticate with Spring Boot: {e}")
-        return False
+    token = auth_token
+    if not token:
+        try:
+            # Fall back to configured service account token (e.g., daily scheduler)
+            token = await authenticator.get_token()
+        except Exception as e:
+            logger.error(f"Failed to authenticate with Spring Boot: {e}")
+            return False
     
     headers = {
         "Content-Type": "application/json",

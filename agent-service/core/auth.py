@@ -10,6 +10,8 @@ import httpx
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
+import jwt
+from fastapi import Header, HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -270,3 +272,42 @@ class ServiceAuthenticator:
 
 # Singleton instance
 authenticator = ServiceAuthenticator()
+
+
+# JWT Authorization helper for client requests (admin verification)
+JWT_SECRET = os.getenv("JWT_SECRET")
+
+def verify_admin_token(authorization: Optional[str] = Header(None)) -> str:
+    """
+    Verifies that the request contains a valid JWT token signed by JWT_SECRET,
+    and that the token has the 'role' claim set to 'ADMIN'.
+    Returns the token string on success.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header format. Must start with 'Bearer '")
+    
+    token = authorization.split(" ")[1]
+    
+    if not JWT_SECRET:
+        logger.error("JWT_SECRET is not configured in environment variables!")
+        raise HTTPException(status_code=500, detail="JWT authentication is not configured on server")
+        
+    try:
+        # Decode token using HS256, HS384, or HS512 (matches Spring Boot's Key HMAC algorithms)
+        payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256", "HS384", "HS512"])
+        
+        # Verify role is ADMIN
+        role = payload.get("role")
+        if role != "ADMIN":
+            logger.warning(f"Access denied: role is '{role}', expected 'ADMIN'")
+            raise HTTPException(status_code=403, detail="Access denied. Admin role required.")
+            
+        return token
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError as e:
+        logger.warning(f"JWT verification failed: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
