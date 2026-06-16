@@ -452,7 +452,7 @@ async def extract_resume(file: UploadFile = File(...)):
         if not text:
             raise HTTPException(status_code=400, detail="Could not extract text from file. Ensure it is not empty or corrupted.")
         
-        extracted = extract_skills_from_text(text)
+        extracted = await extract_skills_from_text(text)
         return extracted
     except Exception as e:
         logger.error(f"Resume extraction endpoint failed: {e}")
@@ -465,10 +465,10 @@ async def match_jobs(request: MatchRequest):
     """
     try:
         # 1. Fetch raw jobs (combines JSearch API + WWR RSS feed)
-        jobs = retrieve_all_jobs(request.skills, request.role)
+        jobs = await retrieve_all_jobs(request.skills, request.role)
         
         # 2. Run matchmaking engine (LLM evaluation on top 5 matches + heuristic scoring on rest)
-        matches = match_jobs_with_llm(request.skills, jobs)
+        matches = await match_jobs_with_llm(request.skills, jobs)
         
         return JobMatchResponse(
             success=True,

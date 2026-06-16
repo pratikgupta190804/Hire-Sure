@@ -3,60 +3,77 @@ import { useAuth } from "../contexts/AuthContext";
 import { useApi } from "../hooks/useApi";
 import { API } from "../utils/constants";
 
+const CACHE_KEY = "jobs_cache";
+const CACHE_ROLE_KEY = "jobs_cache_role";
+
 export default function JobsPage({ navigate }) {
   const { token, user } = useAuth();
   const apiCall = useApi();
 
   const [loading, setLoading] = useState(false);
   const [matchingLoading, setMatchingLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [resume, setResume] = useState(null);
   const [jobsData, setJobsData] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   const [newSkill, setNewSkill] = useState("");
   const [error, setError] = useState("");
   const [uploadProgress, setUploadProgress] = useState("");
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
 
   // Filters State
   const [filterKeyword, setFilterKeyword] = useState("");
-  const [filterLocation, setFilterLocation] = useState("all"); // "all", "remote", "onsite"
-  const [filterMinScore, setFilterMinScore] = useState(0);     // 0, 50, 70, 80, 90
+  const [filterLocation, setFilterLocation] = useState("all");
+  const [filterMinScore, setFilterMinScore] = useState(0);
   const [filterWithSalary, setFilterWithSalary] = useState(false);
   const [targetRole, setTargetRole] = useState("");
 
   // Compute filtered jobs list
   const filteredJobs = jobsData.filter(job => {
-    // Keyword match (case-insensitive checks on title, company, description, location)
     if (filterKeyword.trim()) {
       const query = filterKeyword.toLowerCase();
       const matchText = `${job.title} ${job.company} ${job.location} ${job.description}`.toLowerCase();
       if (!matchText.includes(query)) return false;
     }
-    
-    // Location filter
     if (filterLocation === "remote") {
-      const isRemote = job.location.toLowerCase().includes("remote");
-      if (!isRemote) return false;
+      if (!job.location.toLowerCase().includes("remote")) return false;
     } else if (filterLocation === "onsite") {
-      const isRemote = job.location.toLowerCase().includes("remote");
-      if (isRemote) return false;
+      if (job.location.toLowerCase().includes("remote")) return false;
     }
-    
-    // Match score filter
     if (job.match_score < filterMinScore) return false;
-    
-    // Salary presence filter
-    if (filterWithSalary) {
-      if (!job.salary || job.salary === "Not Specified") return false;
-    }
-    
+    if (filterWithSalary && (!job.salary || job.salary === "Not Specified")) return false;
     return true;
   });
 
-  // Load existing resume data on mount
+  // On mount: load resume + restore cached jobs (NO auto-fetch)
   useEffect(() => {
     if (!user) return;
     loadResume();
+
+    // Restore cached jobs from localStorage
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      const cachedRole = localStorage.getItem(CACHE_ROLE_KEY);
+      if (cached) {
+        setJobsData(JSON.parse(cached));
+      }
+      if (cachedRole) {
+        setTargetRole(cachedRole);
+      }
+    } catch {
+      // ignore parse errors
+    }
   }, [user]);
+
+  const saveToCache = (jobs, role) => {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(jobs));
+      localStorage.setItem(CACHE_ROLE_KEY, role || "");
+    } catch {
+      // ignore storage errors
+    }
+  };
 
   const loadResume = async () => {
     setLoading(true);
@@ -65,11 +82,14 @@ export default function JobsPage({ navigate }) {
       const data = await apiCall("/api/resume");
       if (data) {
         setResume(data);
-        const initialRole = data.preferredRoles && data.preferredRoles.length > 0 
-          ? data.preferredRoles[0] 
-          : "Software Engineer";
-        setTargetRole(initialRole);
-        fetchMatches(initialRole);
+        // Set targetRole from resume only if no cached role exists
+        const cachedRole = localStorage.getItem(CACHE_ROLE_KEY);
+        if (!cachedRole) {
+          const initialRole = data.preferredRoles?.length > 0
+            ? data.preferredRoles[0]
+            : "Software Engineer";
+          setTargetRole(initialRole);
+        }
       }
     } catch (err) {
       console.error("Failed to load resume", err);
@@ -78,16 +98,21 @@ export default function JobsPage({ navigate }) {
     }
   };
 
-  const fetchMatches = async (roleQuery) => {
+  // Fetch fresh jobs — REPLACES existing list (page 1)
+  const fetchNewJobs = async (roleQuery) => {
     setMatchingLoading(true);
     setError("");
+    setPage(1);
     try {
-      const url = roleQuery 
-        ? `/api/jobs/matches?role=${encodeURIComponent(roleQuery)}` 
-        : "/api/jobs/matches";
+      const role = roleQuery || targetRole;
+      const url = role
+        ? `/api/jobs/matches?role=${encodeURIComponent(role)}&page=1`
+        : "/api/jobs/matches?page=1";
       const data = await apiCall(url);
-      if (data && data.matches) {
+      if (data?.matches) {
         setJobsData(data.matches);
+        saveToCache(data.matches, role);
+        setHasMore(data.matches.length > 0);
       }
     } catch (err) {
       console.error("Failed to load matches", err);
@@ -97,30 +122,50 @@ export default function JobsPage({ navigate }) {
     }
   };
 
-  // Drag and drop handlers
+  // Fetch more jobs — APPENDS to existing list (next page)
+  const fetchMoreJobs = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    setError("");
+    const nextPage = page + 1;
+    try {
+      const url = targetRole
+        ? `/api/jobs/matches?role=${encodeURIComponent(targetRole)}&page=${nextPage}`
+        : `/api/jobs/matches?page=${nextPage}`;
+      const data = await apiCall(url);
+      if (data?.matches && data.matches.length > 0) {
+        const merged = [...jobsData, ...data.matches];
+        setJobsData(merged);
+        saveToCache(merged, targetRole);
+        setPage(nextPage);
+        setHasMore(true);
+      } else {
+        setHasMore(false);
+      }
+    } catch (err) {
+      console.error("Failed to load more", err);
+      setError("Failed to fetch more jobs.");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // ── Drag & drop ──────────────────────────────────────────────────────────
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
+    setDragActive(e.type === "dragenter" || e.type === "dragover");
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      uploadFile(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer.files?.[0]) uploadFile(e.dataTransfer.files[0]);
   };
 
   const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      uploadFile(e.target.files[0]);
-    }
+    if (e.target.files?.[0]) uploadFile(e.target.files[0]);
   };
 
   const uploadFile = async (file) => {
@@ -129,7 +174,6 @@ export default function JobsPage({ navigate }) {
       setError("Unsupported file format. Please upload a PDF, DOCX, or TXT file.");
       return;
     }
-
     setLoading(true);
     setError("");
     setUploadProgress("Reading resume text and extracting skills using AI model...");
@@ -140,25 +184,25 @@ export default function JobsPage({ navigate }) {
     try {
       const res = await fetch(`${API}/api/resume/upload`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
-
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.message || "Failed to process resume");
       }
-
       const data = await res.json();
       setResume(data);
       setUploadProgress("");
-      const initialRole = data.preferredRoles && data.preferredRoles.length > 0 
-        ? data.preferredRoles[0] 
+      const initialRole = data.preferredRoles?.length > 0
+        ? data.preferredRoles[0]
         : "Software Engineer";
       setTargetRole(initialRole);
-      fetchMatches(initialRole);
+      // Clear cache on new resume upload and fetch fresh jobs
+      localStorage.removeItem(CACHE_KEY);
+      localStorage.removeItem(CACHE_ROLE_KEY);
+      setJobsData([]);
+      fetchNewJobs(initialRole);
     } catch (err) {
       console.error(err);
       setError(err.message || "Failed to upload and analyze resume. Check your backend status.");
@@ -168,24 +212,16 @@ export default function JobsPage({ navigate }) {
     }
   };
 
+  // ── Skills ───────────────────────────────────────────────────────────────
   const handleAddSkill = async (e) => {
     e.preventDefault();
     if (!newSkill.trim() || !resume) return;
     const updatedSkills = [...resume.skills, newSkill.trim()];
-    
-    // Optimistic UI update
     setResume({ ...resume, skills: updatedSkills });
     setNewSkill("");
-    
     try {
-      const data = await apiCall("/api/resume/skills", {
-        method: "POST",
-        body: updatedSkills,
-      });
-      if (data) {
-        setResume(data);
-        fetchMatches(targetRole);
-      }
+      const data = await apiCall("/api/resume/skills", { method: "POST", body: updatedSkills });
+      if (data) setResume(data);
     } catch (err) {
       console.error(err);
       setError("Failed to update skills list");
@@ -195,19 +231,10 @@ export default function JobsPage({ navigate }) {
   const handleRemoveSkill = async (skillToRemove) => {
     if (!resume) return;
     const updatedSkills = resume.skills.filter(s => s !== skillToRemove);
-    
-    // Optimistic UI update
     setResume({ ...resume, skills: updatedSkills });
-    
     try {
-      const data = await apiCall("/api/resume/skills", {
-        method: "POST",
-        body: updatedSkills,
-      });
-      if (data) {
-        setResume(data);
-        fetchMatches(targetRole);
-      }
+      const data = await apiCall("/api/resume/skills", { method: "POST", body: updatedSkills });
+      if (data) setResume(data);
     } catch (err) {
       console.error(err);
       setError("Failed to update skills list");
@@ -222,6 +249,10 @@ export default function JobsPage({ navigate }) {
     setFilterLocation("all");
     setFilterMinScore(0);
     setFilterWithSalary(false);
+    setPage(1);
+    setHasMore(true);
+    localStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_ROLE_KEY);
   };
 
   const getMatchScoreColor = (score) => {
@@ -275,7 +306,7 @@ export default function JobsPage({ navigate }) {
 
         {/* UPLOAD SCREEN */}
         {!loading && !resume && (
-          <div 
+          <div
             onDragEnter={handleDrag}
             onDragOver={handleDrag}
             onDragLeave={handleDrag}
@@ -297,11 +328,10 @@ export default function JobsPage({ navigate }) {
             <p style={{ color: "var(--text2)", fontSize: 13, marginBottom: 20 }}>
               Supports PDF, DOCX, or TXT formats (Max 5MB)
             </p>
-            
-            <input 
-              type="file" 
-              id="resume-file" 
-              style={{ display: "none" }} 
+            <input
+              type="file"
+              id="resume-file"
+              style={{ display: "none" }}
               onChange={handleFileChange}
               accept=".pdf,.docx,.txt"
             />
@@ -313,11 +343,11 @@ export default function JobsPage({ navigate }) {
 
         {/* DASHBOARD GRID */}
         {!loading && resume && (
-          <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, alignItems: "start" }}>
-            
-            {/* SIDEBAR PROFILE & SKILLS PANEL */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              
+          <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, alignItems: "start", height: "calc(100vh - 180px)", overflow: "hidden" }}>
+
+            {/* SIDEBAR */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto", paddingRight: 4 }}>
+
               {/* PROFILE SUMMARY CARD */}
               <div className="card">
                 <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
@@ -331,36 +361,33 @@ export default function JobsPage({ navigate }) {
                   <div>
                     <span style={{ color: "var(--text3)", display: "block", fontSize: 11, textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Target Job Role</span>
                     <div style={{ display: "flex", gap: 6 }}>
-                      <input 
-                        type="text" 
-                        className="input" 
+                      <input
+                        type="text"
+                        className="input"
                         value={targetRole}
                         onChange={(e) => setTargetRole(e.target.value)}
                         placeholder="e.g. Frontend Developer"
                         style={{ padding: "6px 10px", fontSize: 12 }}
                       />
-                      <button 
-                        className="btn btn-primary btn-sm" 
-                        onClick={() => fetchMatches(targetRole)}
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => fetchNewJobs(targetRole)}
                         disabled={matchingLoading}
                       >
                         Search
                       </button>
                     </div>
                   </div>
-                  {resume.preferredRoles && resume.preferredRoles.length > 0 && (
+                  {resume.preferredRoles?.length > 0 && (
                     <div>
                       <span style={{ color: "var(--text3)", display: "block", fontSize: 11, textTransform: "uppercase", fontWeight: 600, marginBottom: 4 }}>Suggested Roles</span>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {resume.preferredRoles.map((role, idx) => (
-                          <span 
-                            key={idx} 
-                            onClick={() => {
-                              setTargetRole(role);
-                              fetchMatches(role);
-                            }}
-                            style={{ 
-                              cursor: "pointer", 
+                          <span
+                            key={idx}
+                            onClick={() => { setTargetRole(role); fetchNewJobs(role); }}
+                            style={{
+                              cursor: "pointer",
                               fontSize: 10.5,
                               background: targetRole === role ? "rgba(0, 229, 160, 0.15)" : "var(--bg3)",
                               border: `1px solid ${targetRole === role ? "var(--accent)" : "var(--border2)"}`,
@@ -386,7 +413,7 @@ export default function JobsPage({ navigate }) {
                 </div>
               </div>
 
-              {/* INTERACTIVE SKILLS EDITOR CARD */}
+              {/* SKILLS EDITOR */}
               <div className="card">
                 <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
                   🛠️ Skills Extracted
@@ -394,24 +421,19 @@ export default function JobsPage({ navigate }) {
                 <p style={{ color: "var(--text2)", fontSize: 12, marginBottom: 12 }}>
                   Edit or append skills to dynamically refine your matches:
                 </p>
-                
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
                   {resume.skills.map((skill, index) => (
-                    <span 
-                      key={index} 
+                    <span
+                      key={index}
                       className="tag animate-fade-in"
-                      style={{ 
-                        display: "inline-flex", 
-                        alignItems: "center", 
-                        gap: 6, 
-                        background: "var(--bg3)", 
-                        border: "1px solid var(--border2)",
-                        color: "var(--text2)",
-                        padding: "3px 8px"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        background: "var(--bg3)", border: "1px solid var(--border2)",
+                        color: "var(--text2)", padding: "3px 8px"
                       }}
                     >
                       {skill}
-                      <span 
+                      <span
                         onClick={() => handleRemoveSkill(skill)}
                         style={{ cursor: "pointer", color: "var(--red)", fontWeight: "bold", fontSize: 10 }}
                       >
@@ -423,95 +445,100 @@ export default function JobsPage({ navigate }) {
                     <span style={{ color: "var(--text3)", fontSize: 12, fontStyle: "italic" }}>No skills listed yet.</span>
                   )}
                 </div>
-
                 <form onSubmit={handleAddSkill} style={{ display: "flex", gap: 6 }}>
-                  <input 
-                    type="text" 
-                    className="input" 
-                    placeholder="Add skill (e.g. Docker)" 
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="Add skill (e.g. Docker)"
                     value={newSkill}
                     onChange={(e) => setNewSkill(e.target.value)}
                     style={{ padding: "6px 10px", fontSize: 12 }}
                   />
-                  <button type="submit" className="btn btn-primary btn-sm">
-                    Add
-                  </button>
+                  <button type="submit" className="btn btn-primary btn-sm">Add</button>
                 </form>
               </div>
-
             </div>
 
             {/* MAIN JOBS PANEL */}
-            <div>
+            <div style={{ height: "100%", overflowY: "auto", paddingRight: 4 }}>
+              {/* Header row with job count + "Load New Jobs" button */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                 <h2 style={{ fontSize: 16, fontWeight: 600 }}>
                   ✨ Best Matched Jobs ({filteredJobs.length}{filteredJobs.length !== jobsData.length ? ` of ${jobsData.length}` : ""})
                 </h2>
-                {matchingLoading && <div className="spinner" style={{ width: 16, height: 16 }}></div>}
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {matchingLoading && <div className="spinner" style={{ width: 16, height: 16 }}></div>}
+                  {/* Load New Jobs — replaces list, only shown when jobs exist */}
+                  {jobsData.length > 0 && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => fetchNewJobs(targetRole)}
+                      disabled={matchingLoading || loadingMore}
+                      title="Fetch a fresh batch of jobs (replaces current list)"
+                    >
+                      🔄 Load New Jobs
+                    </button>
+                  )}
+                  {/* First-time fetch — only shown when no jobs cached yet */}
+                  {jobsData.length === 0 && !matchingLoading && (
+                    <button
+                      className="btn btn-primary btn-sm"
+                      onClick={() => fetchNewJobs(targetRole)}
+                    >
+                      🔍 Find Jobs
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* FILTERS PANEL */}
               {!matchingLoading && jobsData.length > 0 && (
                 <div className="card" style={{ padding: "14px 18px", marginBottom: 20, background: "var(--bg3)", borderColor: "var(--border2)" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr auto", gap: 12, alignItems: "center" }}>
-                    {/* Keyword Search */}
-                    <div>
-                      <input 
-                        type="text" 
-                        className="input" 
-                        placeholder="🔍 Filter by title, company, or keyword..." 
-                        value={filterKeyword}
-                        onChange={(e) => setFilterKeyword(e.target.value)}
-                        style={{ padding: "8px 12px", fontSize: 12.5 }}
+                    <input
+                      type="text"
+                      className="input"
+                      placeholder="🔍 Filter by title, company, or keyword..."
+                      value={filterKeyword}
+                      onChange={(e) => setFilterKeyword(e.target.value)}
+                      style={{ padding: "8px 12px", fontSize: 12.5 }}
+                    />
+                    <select
+                      className="input"
+                      value={filterLocation}
+                      onChange={(e) => setFilterLocation(e.target.value)}
+                      style={{ padding: "8px 12px", fontSize: 12.5, background: "var(--bg4)" }}
+                    >
+                      <option value="all">📍 All Locations</option>
+                      <option value="remote">💻 Remote Only</option>
+                      <option value="onsite">🏢 Hybrid / Onsite</option>
+                    </select>
+                    <select
+                      className="input"
+                      value={filterMinScore}
+                      onChange={(e) => setFilterMinScore(Number(e.target.value))}
+                      style={{ padding: "8px 12px", fontSize: 12.5, background: "var(--bg4)" }}
+                    >
+                      <option value="0">⚡ Any Match Score</option>
+                      <option value="50">⚡ 50%+ Match</option>
+                      <option value="70">⚡ 70%+ Match</option>
+                      <option value="80">⚡ 80%+ Match</option>
+                      <option value="90">⚡ 90%+ Match</option>
+                    </select>
+                    <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "var(--text2)", userSelect: "none" }}>
+                      <input
+                        type="checkbox"
+                        checked={filterWithSalary}
+                        onChange={(e) => setFilterWithSalary(e.target.checked)}
+                        style={{ accentColor: "var(--accent)", width: 15, height: 15 }}
                       />
-                    </div>
-                    
-                    {/* Location Select */}
-                    <div>
-                      <select 
-                        className="input"
-                        value={filterLocation}
-                        onChange={(e) => setFilterLocation(e.target.value)}
-                        style={{ padding: "8px 12px", fontSize: 12.5, background: "var(--bg4)" }}
-                      >
-                        <option value="all">📍 All Locations</option>
-                        <option value="remote">💻 Remote Only</option>
-                        <option value="onsite">🏢 Hybrid / Onsite</option>
-                      </select>
-                    </div>
-                    
-                    {/* Match Score Select */}
-                    <div>
-                      <select 
-                        className="input"
-                        value={filterMinScore}
-                        onChange={(e) => setFilterMinScore(Number(e.target.value))}
-                        style={{ padding: "8px 12px", fontSize: 12.5, background: "var(--bg4)" }}
-                      >
-                        <option value="0">⚡ Any Match Score</option>
-                        <option value="50">⚡ 50%+ Match</option>
-                        <option value="70">⚡ 70%+ Match</option>
-                        <option value="80">⚡ 80%+ Match</option>
-                        <option value="90">⚡ 90%+ Match</option>
-                      </select>
-                    </div>
-                    
-                    {/* Salary Toggle */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, paddingLeft: 4 }}>
-                      <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "var(--text2)", userSelect: "none" }}>
-                        <input 
-                          type="checkbox" 
-                          checked={filterWithSalary}
-                          onChange={(e) => setFilterWithSalary(e.target.checked)}
-                          style={{ accentColor: "var(--accent)", width: 15, height: 15 }}
-                        />
-                        Paid Only 💰
-                      </label>
-                    </div>
+                      Paid Only 💰
+                    </label>
                   </div>
                 </div>
               )}
 
+              {/* Empty states */}
               {matchingLoading && jobsData.length === 0 && (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 200, gap: 12 }}>
                   <div className="spinner"></div>
@@ -522,8 +549,8 @@ export default function JobsPage({ navigate }) {
               {!matchingLoading && jobsData.length === 0 && (
                 <div className="card" style={{ padding: 48, textAlign: "center", color: "var(--text3)" }}>
                   <span style={{ fontSize: 36, display: "block", marginBottom: 12 }}>🔍</span>
-                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text2)", marginBottom: 6 }}>No Jobs Found</h4>
-                  <p style={{ fontSize: 12 }}>Try adjusting your skills tags in the sidebar to widen search terms.</p>
+                  <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text2)", marginBottom: 6 }}>No Jobs Loaded Yet</h4>
+                  <p style={{ fontSize: 12, marginBottom: 16 }}>Click "Find Jobs" to fetch matched jobs for your profile.</p>
                 </div>
               )}
 
@@ -532,14 +559,9 @@ export default function JobsPage({ navigate }) {
                   <span style={{ fontSize: 36, display: "block", marginBottom: 12 }}>🔍</span>
                   <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text2)", marginBottom: 6 }}>No Filter Matches</h4>
                   <p style={{ fontSize: 12, marginBottom: 16 }}>Try resetting or broadening your filters.</p>
-                  <button 
+                  <button
                     className="btn btn-ghost btn-sm"
-                    onClick={() => {
-                      setFilterKeyword("");
-                      setFilterLocation("all");
-                      setFilterMinScore(0);
-                      setFilterWithSalary(false);
-                    }}
+                    onClick={() => { setFilterKeyword(""); setFilterLocation("all"); setFilterMinScore(0); setFilterWithSalary(false); }}
                     style={{ margin: "0 auto" }}
                   >
                     Reset Filters
@@ -547,34 +569,19 @@ export default function JobsPage({ navigate }) {
                 </div>
               )}
 
+              {/* JOB CARDS */}
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 {filteredJobs.map((job, index) => (
-                  <div 
-                    key={index} 
+                  <div
+                    key={index}
                     className="card fade-in"
-                    style={{ 
-                      display: "flex", 
-                      flexDirection: "column", 
-                      gap: 14, 
-                      transition: "transform 0.15s, border-color 0.15s",
-                      borderColor: "var(--border)"
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "var(--border2)";
-                      e.currentTarget.style.transform = "translateY(-1px)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = "var(--border)";
-                      e.currentTarget.style.transform = "none";
-                    }}
+                    style={{ display: "flex", flexDirection: "column", gap: 14, transition: "transform 0.15s, border-color 0.15s", borderColor: "var(--border)" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--border2)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.transform = "none"; }}
                   >
-                    
-                    {/* JOB TITLE & RATING HEADER */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16 }}>
                       <div>
-                        <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>
-                          {job.title}
-                        </h3>
+                        <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--text)" }}>{job.title}</h3>
                         <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 4, fontSize: 12, color: "var(--text2)" }}>
                           <span style={{ fontWeight: 500, color: "var(--accent)" }}>🏢 {job.company}</span>
                           <span>📍 {job.location}</span>
@@ -583,125 +590,84 @@ export default function JobsPage({ navigate }) {
                           )}
                         </div>
                       </div>
-                      
-                      {/* SCORE GAUGE */}
-                      <div style={{ 
-                        display: "flex", 
-                        flexDirection: "column", 
-                        alignItems: "center", 
-                        justifyContent: "center",
-                        background: "var(--bg3)",
-                        border: `1px solid ${getMatchScoreColor(job.match_score)}`,
-                        borderRadius: "var(--radius)",
-                        padding: "6px 12px",
-                        textAlign: "center",
-                        minWidth: 70
+                      <div style={{
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        background: "var(--bg3)", border: `1px solid ${getMatchScoreColor(job.match_score)}`,
+                        borderRadius: "var(--radius)", padding: "6px 12px", textAlign: "center", minWidth: 70
                       }}>
-                        <span style={{ 
-                          fontSize: 14, 
-                          fontWeight: 700, 
-                          fontFamily: "var(--mono)",
-                          color: getMatchScoreColor(job.match_score) 
-                        }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "var(--mono)", color: getMatchScoreColor(job.match_score) }}>
                           {job.match_score}%
                         </span>
                         <span style={{ fontSize: 9, color: "var(--text3)", fontWeight: 600, textTransform: "uppercase" }}>Match</span>
                       </div>
                     </div>
 
-                    {/* AI MATCH EXPLANATION */}
                     {job.match_reason && (
-                      <div style={{ 
-                        background: "rgba(0, 229, 160, 0.02)", 
-                        borderLeft: "2px solid var(--accent)", 
-                        padding: "10px 14px", 
-                        borderRadius: "0 var(--radius) var(--radius) 0",
-                        fontSize: 12.5,
-                        color: "var(--text2)",
-                        lineHeight: 1.5
+                      <div style={{
+                        background: "rgba(0, 229, 160, 0.02)", borderLeft: "2px solid var(--accent)",
+                        padding: "10px 14px", borderRadius: "0 var(--radius) var(--radius) 0",
+                        fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5
                       }}>
                         <strong>AI Match Summary:</strong> {job.match_reason}
                       </div>
                     )}
 
-                    {/* SKILLS GAP COMPARISON */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      
-                      {/* MATCHING SKILLS */}
-                      {job.matching_skills && job.matching_skills.length > 0 && (
+                      {job.matching_skills?.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600, width: 85, textTransform: "uppercase" }}>Matching Skills</span>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                             {job.matching_skills.map((s, idx) => (
-                              <span 
-                                key={idx} 
-                                style={{ 
-                                  fontSize: 10.5, 
-                                  background: "rgba(0, 229, 160, 0.08)", 
-                                  color: "var(--accent)", 
-                                  border: "1px solid rgba(0, 229, 160, 0.15)",
-                                  padding: "1px 6px",
-                                  borderRadius: 4,
-                                  fontWeight: 500
-                                }}
-                              >
-                                {s}
-                              </span>
+                              <span key={idx} style={{ fontSize: 10.5, background: "rgba(0, 229, 160, 0.08)", color: "var(--accent)", border: "1px solid rgba(0, 229, 160, 0.15)", padding: "1px 6px", borderRadius: 4, fontWeight: 500 }}>{s}</span>
                             ))}
                           </div>
                         </div>
                       )}
-
-                      {/* MISSING SKILLS */}
-                      {job.missing_skills && job.missing_skills.length > 0 && (
+                      {job.missing_skills?.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span style={{ fontSize: 11, color: "var(--text3)", fontWeight: 600, width: 85, textTransform: "uppercase" }}>Missing Skills</span>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                             {job.missing_skills.map((s, idx) => (
-                              <span 
-                                key={idx} 
-                                style={{ 
-                                  fontSize: 10.5, 
-                                  background: "rgba(239, 68, 68, 0.08)", 
-                                  color: "var(--red)", 
-                                  border: "1px solid rgba(239, 68, 68, 0.15)",
-                                  padding: "1px 6px",
-                                  borderRadius: 4,
-                                  fontWeight: 500
-                                }}
-                              >
-                                {s}
-                              </span>
+                              <span key={idx} style={{ fontSize: 10.5, background: "rgba(239, 68, 68, 0.08)", color: "var(--red)", border: "1px solid rgba(239, 68, 68, 0.15)", padding: "1px 6px", borderRadius: 4, fontWeight: 500 }}>{s}</span>
                             ))}
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {/* JOB SNIPPET & ACTION BAR */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 12, marginTop: 4 }}>
-                      <p style={{ color: "var(--text3)", fontSize: 11 }}>
-                        Source: Web Aggregator
-                      </p>
-                      <a 
-                        href={job.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="btn btn-primary btn-sm"
-                        style={{ textDecoration: "none" }}
-                      >
+                      <p style={{ color: "var(--text3)", fontSize: 11 }}>Source: Web Aggregator</p>
+                      <a href={job.url} target="_blank" rel="noopener noreferrer" className="btn btn-primary btn-sm" style={{ textDecoration: "none" }}>
                         Apply on Job Site ↗
                       </a>
                     </div>
-
                   </div>
                 ))}
               </div>
-            </div>
 
+              {/* ── LOAD MORE BUTTON (bottom) ── */}
+              {!matchingLoading && jobsData.length > 0 && (
+                <div style={{ display: "flex", justifyContent: "center", marginTop: 28 }}>
+                  {hasMore ? (
+                    <button
+                      className="btn btn-ghost"
+                      onClick={fetchMoreJobs}
+                      disabled={loadingMore}
+                      style={{ minWidth: 160, gap: 8 }}
+                    >
+                      {loadingMore
+                        ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Loading...</>
+                        : "⬇️ Load More Jobs"
+                      }
+                    </button>
+                  ) : (
+                    <p style={{ color: "var(--text3)", fontSize: 12 }}>You've reached the end of the results.</p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
-
       </div>
     </div>
   );

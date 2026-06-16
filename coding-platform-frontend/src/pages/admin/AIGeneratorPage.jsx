@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useToast } from "../../hooks/useToast";
 import { diffBadge } from "../../utils/helpers";
-import { AGENT } from "../../utils/constants";
+import { API } from "../../utils/constants";
 import { useApi } from "../../hooks/useApi";
 import { EditPreviewForm } from "./EditPreviewForm";
 
@@ -47,12 +47,12 @@ export function AIGeneratorPage() {
       if (!body.topic) delete body.topic;
       if (!body.difficulty) delete body.difficulty;
       if (!body.company_style) delete body.company_style;
-      
+
       const d = await api("/generate/preview", {
         method: "POST",
         body: body,
-      }, AGENT);
-      
+      }, API);
+
       show(
         `Generated ${d.problems_generated} problem(s)! Review below.`,
         "success",

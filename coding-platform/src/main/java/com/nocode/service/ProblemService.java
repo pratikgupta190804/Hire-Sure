@@ -53,12 +53,19 @@ public class ProblemService {
             page = problemRepository.findByIsContestOnlyFalse(pageable);
         }
 
+        java.util.List<String> problemIds = page.getContent().stream().map(Problem::getId).toList();
+        java.util.Set<String> solvedProblemIds = new java.util.HashSet<>();
+        if (currentUserId != null && !problemIds.isEmpty()) {
+            solvedProblemIds.addAll(submissionRepository.findSolvedProblemIds(
+                    currentUserId, problemIds, SubmissionStatus.ACCEPTED));
+        }
+
         return page.map(p -> ProblemSummaryResponse.builder()
                 .id(p.getId())
                 .title(p.getTitle())
                 .slug(p.getSlug())
                 .difficulty(p.getDifficulty())
-                .solved(isSolvedByUser(p.getId(), currentUserId))
+                .solved(solvedProblemIds.contains(p.getId()))
                 .createdAt(p.getCreatedAt())
                 .build());
     }

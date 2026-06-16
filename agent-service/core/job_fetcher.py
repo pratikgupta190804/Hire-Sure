@@ -2,79 +2,108 @@ import os
 import logging
 import httpx
 import feedparser
+import asyncio
+import time
 from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Fallback seed jobs are removed to prevent displaying fake jobs to users.
+# In-memory caches with TTL
+_wwr_cache = {
+    "jobs": [],
+    "timestamp": 0.0
+}
+WWR_CACHE_TTL = 3600  # Cache WWR RSS feed for 1 hour
+
+_jsearch_cache = {}  # {query_str: {"jobs": [...], "timestamp": ...}}
+JSEARCH_CACHE_TTL = 1800  # Cache JSearch queries for 30 minutes
 
 
-def fetch_wwr_jobs(keywords: List[str] = None) -> List[Dict[str, Any]]:
+async def fetch_wwr_jobs(keywords: List[str] = None) -> List[Dict[str, Any]]:
     """
     Fetches remote jobs from We Work Remotely (WWR) RSS feed.
-    Caches or parses on the fly. Completely legal and stable.
+    Caches parsed feed in memory to minimize network calls.
     """
     url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-    logger.info(f"Fetching remote developer jobs from WWR RSS: {url}")
+    now = time.time()
     
-    try:
-        # Fetch content with httpx
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url)
-            response.raise_for_status()
+    # Check if cache is still valid
+    if _wwr_cache["jobs"] and (now - _wwr_cache["timestamp"] < WWR_CACHE_TTL):
+        logger.info(f"✓ WWR RSS cache hit (age: {now - _wwr_cache['timestamp']:.1f}s)")
+        jobs = _wwr_cache["jobs"]
+    else:
+        logger.info(f"Fetching remote developer jobs from WWR RSS: {url}")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                
+            # Parse XML feed
+            feed = feedparser.parse(response.text)
+            parsed_jobs = []
             
-        # Parse XML feed
-        feed = feedparser.parse(response.text)
-        jobs = []
-        
-        for entry in feed.entries:
-            title_parts = entry.title.split(":")
-            company = title_parts[0].strip() if len(title_parts) > 1 else "We Work Remotely"
-            job_title = title_parts[1].strip() if len(title_parts) > 1 else entry.title
+            for entry in feed.entries:
+                title_parts = entry.title.split(":")
+                company = title_parts[0].strip() if len(title_parts) > 1 else "We Work Remotely"
+                job_title = title_parts[1].strip() if len(title_parts) > 1 else entry.title
+                
+                # Extract basic description text
+                desc = entry.description if hasattr(entry, "description") else entry.summary
+                import re
+                clean_desc = re.sub(r'<[^>]+>', '', desc)
+                
+                parsed_jobs.append({
+                    "title": job_title,
+                    "company": company,
+                    "location": "Remote",
+                    "description": clean_desc[:800] + ("..." if len(clean_desc) > 800 else ""),
+                    "url": entry.link,
+                    "salary": "Not Specified"
+                })
             
-            # Extract basic description text
-            desc = entry.description if hasattr(entry, "description") else entry.summary
-            # Strip simple HTML if any (RSS summary is usually HTML)
-            import re
-            clean_desc = re.sub(r'<[^>]+>', '', desc)
-            
-            jobs.append({
-                "title": job_title,
-                "company": company,
-                "location": "Remote",
-                "description": clean_desc[:800] + ("..." if len(clean_desc) > 800 else ""),
-                "url": entry.link,
-                "salary": "Not Specified" # RSS feed doesn't consistently provide salary
-            })
-        
-        logger.info(f"Successfully retrieved {len(jobs)} jobs from We Work Remotely RSS")
-        
-        # Filter by keyword if provided
-        if keywords:
-            filtered = []
-            keywords_lower = [k.lower() for k in keywords]
-            for job in jobs:
-                match_text = (job["title"] + " " + job["description"]).lower()
-                if any(kw in match_text for kw in keywords_lower):
-                    filtered.append(job)
-            logger.info(f"Filtered to {len(filtered)} WWR jobs matching keywords {keywords}")
-            return filtered
-            
-        return jobs
-        
-    except Exception as e:
-        logger.error(f"Failed to fetch jobs from We Work Remotely: {e}")
-        return []
+            logger.info(f"Successfully retrieved and cached {len(parsed_jobs)} jobs from We Work Remotely RSS")
+            _wwr_cache["jobs"] = parsed_jobs
+            _wwr_cache["timestamp"] = now
+            jobs = parsed_jobs
+        except Exception as e:
+            logger.error(f"Failed to fetch jobs from We Work Remotely: {e}")
+            # Use expired cache as fallback if network fails
+            if _wwr_cache["jobs"]:
+                logger.warning("Using expired WWR cache due to network failure")
+                return _wwr_cache["jobs"]
+            return []
 
-def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str, Any]]:
+    # Filter by keyword if provided
+    if keywords:
+        filtered = []
+        keywords_lower = [k.lower() for k in keywords]
+        for job in jobs:
+            match_text = (job["title"] + " " + job["description"]).lower()
+            if any(kw in match_text for kw in keywords_lower):
+                filtered.append(job)
+        logger.info(f"Filtered to {len(filtered)} WWR jobs matching keywords {keywords}")
+        return filtered
+        
+    return jobs
+
+
+async def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str, Any]]:
     """
     Fetches jobs from JSearch (RapidAPI) if credentials are set in environment.
+    Caches results by query string in memory to avoid rate limit exhaustion.
     """
     api_key = os.getenv("JSEARCH_API_KEY")
-    
     if not api_key:
         logger.info("JSearch API key not configured (JSEARCH_API_KEY). Skipping JSearch.")
         return []
+        
+    query = f"{keywords} in {location}" if location else keywords
+    now = time.time()
+    
+    # Check cache
+    if query in _jsearch_cache and (now - _jsearch_cache[query]["timestamp"] < JSEARCH_CACHE_TTL):
+        logger.info(f"✓ JSearch cache hit for query '{query}'")
+        return _jsearch_cache[query]["jobs"]
         
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
@@ -82,7 +111,6 @@ def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str,
         "x-rapidapi-key": api_key
     }
     
-    query = f"{keywords} in {location}" if location else keywords
     params = {
         "query": query,
         "page": "1",
@@ -91,8 +119,8 @@ def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str,
     
     logger.info(f"Fetching jobs from JSearch API for query: '{query}'")
     try:
-        with httpx.Client(timeout=10.0) as client:
-            response = client.get(url, headers=headers, params=params)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             
         data = response.json()
@@ -100,7 +128,6 @@ def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str,
         jobs = []
         
         for item in results:
-            # Salary extraction
             salary_min = item.get("job_min_salary")
             salary_max = item.get("job_max_salary")
             salary_currency = item.get("job_salary_currency", "USD")
@@ -121,32 +148,41 @@ def fetch_jsearch_jobs(keywords: str, location: str = "india") -> List[Dict[str,
                 "salary": salary_str
             })
             
-        logger.info(f"Retrieved {len(jobs)} jobs from JSearch API")
+        logger.info(f"Retrieved and cached {len(jobs)} jobs from JSearch API")
+        _jsearch_cache[query] = {
+            "jobs": jobs,
+            "timestamp": now
+        }
         return jobs
     except Exception as e:
         logger.error(f"Failed to fetch jobs from JSearch API: {e}")
         return []
 
-def retrieve_all_jobs(skills: List[str], role: str = None) -> List[Dict[str, Any]]:
+
+async def retrieve_all_jobs(skills: List[str], role: str = None) -> List[Dict[str, Any]]:
     """
-    Unified manager that fetches jobs based on user skills and target role.
+    Unified manager that fetches jobs based on user skills and target role asynchronously.
+    Fetches WWR RSS and JSearch concurrently if needed.
     """
     if not skills:
         logger.warning("No skills provided for job search. Returning empty list.")
         return []
         
-    # Query string for JSearch is the target role!
-    # If role is not provided, fallback to top skills
     query_str = role if role else " ".join(skills[:3])
+    wwr_keywords = [role] if role else skills[:3]
     
-    # 1. Try JSearch API
-    jobs = fetch_jsearch_jobs(query_str)
+    # Run fetchers concurrently to reduce overall latency
+    results = await asyncio.gather(
+        fetch_jsearch_jobs(query_str),
+        fetch_wwr_jobs(wwr_keywords),
+        return_exceptions=True
+    )
     
-    # 2. Try We Work Remotely RSS feed
-    # For WWR we query with search keywords (role or skills[:3])
-    if not jobs:
-        wwr_keywords = [role] if role else skills[:3]
-        jobs = fetch_wwr_jobs(wwr_keywords)
+    jsearch_jobs = results[0] if not isinstance(results[0], Exception) else []
+    wwr_jobs = results[1] if not isinstance(results[1], Exception) else []
+    
+    # Prioritize JSearch jobs, fallback to WWR
+    jobs = jsearch_jobs if jsearch_jobs else wwr_jobs
         
     # Deduplicate by title + company
     seen = set()

@@ -70,7 +70,7 @@ def heuristic_match(user_skills: List[str], job: Dict[str, Any]) -> Dict[str, An
         "match_reason": reason
     }
 
-def match_jobs_with_llm(user_skills: List[str], jobs: List[Dict[str, Any]]) -> List[JobMatch]:
+async def match_jobs_with_llm(user_skills: List[str], jobs: List[Dict[str, Any]]) -> List[JobMatch]:
     """
     Evaluates a list of jobs against user skills using LLM for top jobs.
     Uses fallback heuristic matching for remaining jobs to optimize latency and api limits.
@@ -96,7 +96,7 @@ def match_jobs_with_llm(user_skills: List[str], jobs: List[Dict[str, Any]]) -> L
         llm = get_llm_with_fallback()
         
         prompt = f"""Candidate Skills: {user_skills}
-
+ 
 Evaluate the following {top_n} jobs:
 """
         for i, j in enumerate(top_jobs):
@@ -114,7 +114,7 @@ Description: {j['description'][:500]}
         ]
         
         try:
-            response = llm.invoke(messages)
+            response = await llm.ainvoke(messages)
             raw = response.content.strip()
             
             if raw.startswith("```"):

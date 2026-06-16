@@ -37,6 +37,46 @@ export default function ContestDetailPage({ contestId, navigate }) {
     }
   };
 
+  const shareContest = async () => {
+    const contestUrl = `${window.location.origin}/contest/${contest.id}/info`;
+
+    const shareText = `
+🚀 Coding Contest Alert! 🚀
+
+${contest.title}
+
+${contest.description || ""}
+
+🏆 Compete with fellow programmers
+⚡ Solve challenging problems
+📈 Improve your problem-solving skills
+🎯 Climb the leaderboard
+
+📌 Rules:
+${contest.rules || "Follow contest guidelines."}
+
+🔗 Join the contest:
+${contestUrl}
+
+Invite your friends and see who comes out on top! 💻🔥
+`.trim();
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: contest.title,
+          text: shareText,
+          url: contestUrl,
+        });
+      } else {
+        await navigator.clipboard.writeText(shareText);
+        alert("Contest details copied to clipboard!");
+      }
+    } catch (err) {
+      console.log("Share cancelled");
+    }
+  };
+
   if (loading) {
     return (
       <div className="page content" style={{ maxWidth: 768, margin: "0 auto", display: "flex", justifyContent: "center", padding: 60 }}>
@@ -118,6 +158,10 @@ export default function ContestDetailPage({ contestId, navigate }) {
               {title}
             </h1>
           </div>
+
+          <button onClick={shareContest} className="btn btn-ghost btn-sm">
+            Share Contest
+          </button>
 
           {!isFinished &&
             (participating ? (

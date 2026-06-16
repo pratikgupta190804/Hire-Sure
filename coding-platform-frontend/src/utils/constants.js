@@ -1,5 +1,5 @@
-export const API = "http://localhost:8080";
-export const AGENT = "http://localhost:8001";
+export const API = import.meta.env.VITE_BACKEND_API_URL;
+export const AGENT = import.meta.env.VITE_AGENT_SERVICE_URL;
 
 export const LANGUAGES = [
   { id: 71, name: "Python 3" },

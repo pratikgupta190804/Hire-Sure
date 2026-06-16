@@ -54,18 +54,18 @@ def extract_text_from_file(file_bytes: bytes, filename: str) -> str:
             except Exception as e:
                 raise ValueError(f"Failed to decode file {filename} as text: {e}")
 
-def extract_skills_from_text(text: str) -> ExtractedSkills:
+async def extract_skills_from_text(text: str) -> ExtractedSkills:
     """Sends raw resume text to LLM and returns structured ExtractedSkills. Falls back to NLP parsing on error."""
     logger.info("Extracting skills from resume text using LLM...")
     llm = get_llm_with_fallback()
     
     user_prompt = f"""Analyze this resume text and extract the details in the specified JSON format.
-
+ 
 Resume Text:
 \"\"\"
 {text}
 \"\"\"
-
+ 
 Return ONLY a JSON object with these exact keys:
 {{
   "skills": ["skill1", "skill2", ...],
@@ -81,7 +81,7 @@ Return ONLY a JSON object with these exact keys:
     ]
     
     try:
-        response = llm.invoke(messages)
+        response = await llm.ainvoke(messages)
         raw = response.content.strip()
         
         # Strip markdown fences if present
@@ -140,8 +140,14 @@ def extract_skills_regex_only(text: str) -> list[str]:
             found.append(normalized)
     return list(set(found))
 
+# Global cache variables for spaCy and SkillExtractor to load the heavy models only once
+_nlp = None
+_skill_extractor = None
+_SKILL_DB = None
+
 def extract_skills_with_spacy_fallback(text: str) -> ExtractedSkills:
     """Extracts skills using spaCy and SkillNER rule-based parser, falling back to regex."""
+    global _nlp, _skill_extractor, _SKILL_DB
     logger.info("Running spaCy + SkillNER backup skill extractor...")
     skills = []
     experience_level = "Mid-Level"
@@ -167,13 +173,20 @@ def extract_skills_with_spacy_fallback(text: str) -> ExtractedSkills:
         preferred_roles = ["Software Engineer"]
         
     try:
-        import spacy
-        from spacy.matcher import PhraseMatcher
-        from skillNer.general_params import SKILL_DB
-        from skillNer.skill_extractor_class import SkillExtractor
+        if _nlp is None:
+            import spacy
+            from spacy.matcher import PhraseMatcher
+            from skillNer.general_params import SKILL_DB
+            from skillNer.skill_extractor_class import SkillExtractor
+            
+            _nlp = spacy.load("en_core_web_sm")
+            _SKILL_DB = SKILL_DB
+            _skill_extractor = SkillExtractor(_nlp, _SKILL_DB, PhraseMatcher)
+            logger.info("✓ spaCy and SkillNER models loaded and cached successfully.")
         
-        nlp = spacy.load("en_core_web_sm")
-        skill_extractor = SkillExtractor(nlp, SKILL_DB, PhraseMatcher)
+        nlp = _nlp
+        SKILL_DB = _SKILL_DB
+        skill_extractor = _skill_extractor
         
         # SkillNer can fail if text is very long or empty, slice it
         sample_text = text[:8000]
