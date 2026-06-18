@@ -3,14 +3,15 @@ package com.nocode.service;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.CreateContainerResponse;
+import com.github.dockerjava.api.command.ExecCreateCmdResponse;
 import com.github.dockerjava.api.model.*;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.io.*;
@@ -19,23 +20,41 @@ import java.nio.file.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Logger;
 
 /**
- * Custom Docker-based code execution engine.
- * Replaces Judge0 entirely — no external dependencies, completely free.
+ * Docker-based code execution engine with a warm container pool.
  *
- * Flow per submission:
- *  1. Write source code to a temp directory on host
- *  2. Spin a Docker container with that directory mounted
- *  3. If compiled language: run compile step first
- *  4. Run the program with stdin piped in
- *  5. Capture stdout/stderr with a time limit
- *  6. Kill & remove the container
- *  7. Clean up temp directory
+ * Instead of create→start→exec→destroy per submission (~1.5–3 s), we keep
+ * one long-running container per language alive and route submissions through
+ * `docker exec`.  Cold-start cost is paid once at boot; subsequent runs cost
+ * only the actual program runtime (~50–200 ms).
+ *
+ * Container lifecycle
+ * ───────────────────
+ *  • At startup, one container per active Language is created and started.
+ *  • Each container tracks its run count via an AtomicInteger.
+ *  • When runCount reaches REFRESH_AFTER_RUNS the container is replaced
+ *    asynchronously: the new one is fully started before the old one is
+ *    destroyed, so there is never a gap in availability.
+ *  • A per-language semaphore (pool size = POOL_CONCURRENCY) prevents
+ *    concurrent execs from interfering with each other's filesystem writes.
+ *  • If a warm container is somehow unavailable (crash, OOM) the pool
+ *    recreates it before returning an error to the caller.
  */
 @Service
 @ConditionalOnProperty(name = "execution.enabled", havingValue = "true", matchIfMissing = true)
 public class CodeExecutionEngine implements ExecutionService {
+
+    private static final Logger log = Logger.getLogger(CodeExecutionEngine.class.getName());
+
+    // How many execs to allow before recycling the container for cleanliness.
+    private static final int REFRESH_AFTER_RUNS = 50;
+
+    // Max concurrent execs inside a single warm container (1 = fully serialised per language).
+    // Increase if you want parallelism at the cost of noisier resource sharing.
+    private static final int POOL_CONCURRENCY = 1;
 
     @Value("${execution.time-limit-seconds:5}")
     private int timeLimitSeconds;
@@ -45,39 +64,86 @@ public class CodeExecutionEngine implements ExecutionService {
 
     private DockerClient dockerClient;
 
+    /**
+     * One slot per language: the currently warm container + its concurrency guard.
+     */
+    private final Map<Language, WarmContainer> pool = new ConcurrentHashMap<>();
+
+    /**
+     * Dedicated thread pool for async container refresh so it never ties up
+     * a Tomcat request thread.
+     */
+    private final ExecutorService refreshExecutor =
+            Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "container-refresh");
+                t.setDaemon(true);
+                return t;
+            });
+
+    // ── Warm container record ─────────────────────────────────────────────────
+
+    /**
+     * Holds a running container ID together with its run counter and a
+     * semaphore that serialises (or limits) concurrent execs.
+     */
+    private static class WarmContainer {
+        volatile String containerId;
+        final AtomicInteger runCount = new AtomicInteger(0);
+        final Semaphore semaphore = new Semaphore(POOL_CONCURRENCY, true);
+        final Language language;
+
+        WarmContainer(String containerId, Language language) {
+            this.containerId = containerId;
+            this.language    = language;
+        }
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
     @PostConstruct
     public void init() {
-        try {
-            DefaultDockerClientConfig config = DefaultDockerClientConfig
-                    .createDefaultConfigBuilder()
-                    .build();
+        DefaultDockerClientConfig config = DefaultDockerClientConfig
+                .createDefaultConfigBuilder()
+                .build();
 
-            ApacheDockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()
-                    .dockerHost(config.getDockerHost())
-                    .sslConfig(config.getSSLConfig())
-                    .maxConnections(50)
-                    .connectionTimeout(Duration.ofSeconds(10))
-                    .responseTimeout(Duration.ofSeconds(30))
-                    .build();
+        ApacheDockerHttpClient httpClient = new ApacheDockerHttpClient.Builder()
+                .dockerHost(config.getDockerHost())
+                .sslConfig(config.getSSLConfig())
+                .maxConnections(50)
+                .connectionTimeout(Duration.ofSeconds(10))
+                .responseTimeout(Duration.ofSeconds(30))
+                .build();
 
-            dockerClient = DockerClientImpl.getInstance(config, httpClient);
-            
-            // Test connection
-            dockerClient.pingCmd().exec();
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to connect to Docker daemon. Make sure Docker is running!", e);
+        dockerClient = DockerClientImpl.getInstance(config, httpClient);
+        dockerClient.pingCmd().exec();
+
+        // Pre-warm one container per supported language.
+        for (Language lang : Language.values()) {
+            try {
+                pullImageIfNeeded(lang.getDockerImage());
+                WarmContainer wc = createWarmContainer(lang);
+                pool.put(lang, wc);
+                log.info(String.format("Warm container ready [%s] → %s", lang.name(), wc.containerId));
+            } catch (Exception e) {
+                // Non-fatal: the language simply won't be available until Docker recovers.
+                log.warning(String.format("Failed to warm container for %s: %s", lang.name(), e.getMessage()));
+            }
         }
     }
 
     @PreDestroy
     public void destroy() {
+        pool.forEach((lang, wc) -> forceRemoveContainer(wc.containerId));
+        pool.clear();
+        refreshExecutor.shutdownNow();
         try {
             if (dockerClient != null) dockerClient.close();
         } catch (IOException ignored) {}
     }
 
-    // ── Main entry point ──────────────────────────────────────────────────────
+    // ── Public execute API ────────────────────────────────────────────────────
 
+    @Override
     public ExecutionResult execute(String sourceCode, int languageId, String stdin) {
         Language lang;
         try {
@@ -89,135 +155,77 @@ public class CodeExecutionEngine implements ExecutionService {
                     .build();
         }
 
-        // Pull image if not present (only happens once per image)
-        pullImageIfNeeded(lang.getDockerImage());
+        WarmContainer wc = pool.computeIfAbsent(lang, l -> {
+            try { return createWarmContainer(l); }
+            catch (Exception ex) { throw new RuntimeException(ex); }
+        });
 
-        Path workDir = null;
-        String containerId = null;
+        // Acquire concurrency permit before touching the container filesystem.
+        try {
+            wc.semaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return ExecutionResult.builder().stderr("Interrupted waiting for execution slot").exitCode(1).build();
+        }
 
         try {
-            // 1. Write source code to temp dir
-            workDir = Files.createTempDirectory("exec-");
-            Path sourceFile = workDir.resolve(lang.getFileName());
-            Files.writeString(sourceFile, sourceCode);
+            return executeInWarmContainer(wc, sourceCode, stdin, lang);
+        } finally {
+            wc.semaphore.release();
+            maybeScheduleRefresh(lang, wc);
+        }
+    }
 
-            // 2. Compile step (if needed)
+    // ── Core exec logic ───────────────────────────────────────────────────────
+
+    /**
+     * Copy source into the warm container's /workspace and run it via docker exec.
+     * No create/start/destroy — just a single exec call per submission.
+     */
+    private ExecutionResult executeInWarmContainer(WarmContainer wc,
+                                                   String sourceCode,
+                                                   String stdin,
+                                                   Language lang) {
+        long startMs = System.currentTimeMillis();
+
+        try {
+            // Use a unique subdirectory per run so concurrent runs don't clash
+            // even if POOL_CONCURRENCY > 1 in the future.
+            String runId  = UUID.randomUUID().toString().substring(0, 8);
+            String runDir = "/workspace/run-" + runId;
+
+            // 1. Create isolated run directory and write source + stdin atomically.
+            execSilent(wc.containerId, new String[]{"mkdir", "-p", runDir});
+
+            writeFileToContainer(wc.containerId, runDir + "/" + lang.getFileName(), sourceCode);
+            writeFileToContainer(wc.containerId, runDir + "/.stdin", stdin != null ? stdin : "");
+
+            // 2. Compile step for compiled languages.
             if (lang.isCompiled()) {
-                ExecutionResult compileResult = runInContainer(
-                        lang.getDockerImage(),
-                        lang.getCompileCmd(),
-                        "",
-                        workDir,
-                        30  // compile timeout is generous
-                );
-                if (!compileResult.isSuccess()) {
+                String compileCmd = "cd " + runDir + " && " + lang.getCompileCmd();
+                ExecResult compileResult = execWithOutput(
+                        wc.containerId, new String[]{"sh", "-c", compileCmd}, 30);
+
+                if (compileResult.exitCode != 0) {
                     return ExecutionResult.builder()
-                            .compileOutput(compileResult.getStderr() != null
-                                    ? compileResult.getStderr()
-                                    : compileResult.getStdout())
-                            .stderr(compileResult.getStderr())
-                            .exitCode(compileResult.getExitCode())
-                            .timedOut(compileResult.isTimedOut())
+                            .compileOutput(compileResult.stderr.isEmpty()
+                                    ? compileResult.stdout : compileResult.stderr)
+                            .stderr(compileResult.stderr)
+                            .exitCode(compileResult.exitCode)
                             .build();
                 }
             }
 
-            // 3. Run step
-            ExecutionResult result = runInContainer(
-                    lang.getDockerImage(),
-                    lang.getRunCmd(),
-                    stdin != null ? stdin : "",
-                    workDir,
-                    timeLimitSeconds
-            );
-            return result;
+            // 3. Run step — stdin is redirected from the file we wrote above.
+            String runCmd = "cd " + runDir + " && " + lang.getRunCmd() + " < .stdin";
+            ExecResult runResult = execWithOutput(
+                    wc.containerId, new String[]{"sh", "-c", runCmd}, timeLimitSeconds);
 
-        } catch (Exception e) {
-            return ExecutionResult.builder()
-                    .stderr("Internal execution error: " + e.getMessage())
-                    .exitCode(1)
-                    .build();
-        } finally {
-            cleanup(workDir);
-        }
-    }
-
-    // ── Docker container lifecycle ────────────────────────────────────────────
-
-    private ExecutionResult runInContainer(String image, String cmd,
-                                           String stdin, Path workDir,
-                                           int timeoutSeconds) throws Exception {
-
-        String containerId = null;
-        long startMs = System.currentTimeMillis();
-
-        try {
-            // Build the shell command: echo stdin | sh -c "cmd"
-            // We write stdin to a file and redirect, cleaner than piping
-            Path stdinFile = workDir.resolve(".stdin");
-            Files.writeString(stdinFile, stdin);
-
-            String fullCmd = String.format("sh -c '%s < /workspace/.stdin'", cmd.replace("'", "'\\''")); 
-
-            // Create container
-            CreateContainerResponse container = dockerClient.createContainerCmd(image)
-                    .withCmd("sh", "-c", cmd + " < /workspace/.stdin")
-                    .withHostConfig(HostConfig.newHostConfig()
-                            .withBinds(new Bind(workDir.toAbsolutePath().toString(),
-                                    new Volume("/workspace")))
-                            .withMemory((long) memoryLimitMb * 1024 * 1024)
-                            .withMemorySwap((long) memoryLimitMb * 1024 * 1024) // disable swap
-                            .withCpuPeriod(100000L)
-                            .withCpuQuota(50000L)   // 50% of one CPU
-                            .withNetworkMode("none") // no network access
-                            .withReadonlyRootfs(false)
-                            .withPidsLimit(64L)     // prevent fork bombs
-                    )
-                    .withWorkingDir("/workspace")
-                    .exec();
-
-            containerId = container.getId();
-            
-            dockerClient.startContainerCmd(containerId).exec();
-
-            // Capture output
-            StringBuilder stdout = new StringBuilder();
-            StringBuilder stderr = new StringBuilder();
-            CountDownLatch latch = new CountDownLatch(1);
-
-            dockerClient.logContainerCmd(containerId)
-                    .withStdOut(true)
-                    .withStdErr(true)
-                    .withFollowStream(true)
-                    .exec(new ResultCallback.Adapter<Frame>() {
-                        @Override
-                        public void onNext(Frame frame) {
-                            String text = new String(frame.getPayload(), StandardCharsets.UTF_8);
-                            if (frame.getStreamType() == StreamType.STDOUT) {
-                                stdout.append(text);
-                            } else {
-                                stderr.append(text);
-                            }
-                        }
-                        @Override
-                        public void onComplete() { 
-                            latch.countDown(); 
-                        }
-                        @Override
-                        public void onError(Throwable t) { 
-                            latch.countDown(); 
-                        }
-                    });
-
-            // Wait for container to finish, with timeout
-            boolean finished = latch.await(timeoutSeconds, TimeUnit.SECONDS);
             long runtimeMs = System.currentTimeMillis() - startMs;
 
-            if (!finished) {
-                // TLE — kill immediately
-                try { dockerClient.killContainerCmd(containerId).exec(); } catch (Exception ignored) {}
+            if (runResult.timedOut) {
                 return ExecutionResult.builder()
-                        .stdout(stdout.toString())
+                        .stdout(runResult.stdout)
                         .stderr("Time limit exceeded")
                         .exitCode(124)
                         .runtimeMs(runtimeMs)
@@ -225,34 +233,276 @@ public class CodeExecutionEngine implements ExecutionService {
                         .build();
             }
 
-            // Get exit code
-            int exitCode = dockerClient.inspectContainerCmd(containerId).exec()
-                    .getState().getExitCodeLong().intValue();
-
-            // Check OOM
-            boolean oomKilled = Boolean.TRUE.equals(
-                    dockerClient.inspectContainerCmd(containerId).exec()
-                            .getState().getOOMKilled());
-
             return ExecutionResult.builder()
-                    .stdout(stdout.toString())
-                    .stderr(stderr.toString())
-                    .exitCode(exitCode)
+                    .stdout(runResult.stdout)
+                    .stderr(runResult.stderr)
+                    .exitCode(runResult.exitCode)
                     .runtimeMs(runtimeMs)
-                    .oomKilled(oomKilled)
                     .build();
 
         } catch (Exception e) {
-            throw e;
+            return ExecutionResult.builder()
+                    .stderr("Execution error: " + e.getMessage())
+                    .exitCode(1)
+                    .build();
         } finally {
-            // Always remove the container
-            if (containerId != null) {
+            // Best-effort cleanup of the run directory; don't block on failure.
+            try {
+                execSilent(wc.containerId,
+                        new String[]{"sh", "-c", "rm -rf /workspace/run-*"});
+            } catch (Exception ignored) {}
+        }
+    }
+
+    // ── docker exec helpers ───────────────────────────────────────────────────
+
+    /**
+     * Lightweight record returned by execWithOutput.
+     */
+    private static class ExecResult {
+        final String  stdout;
+        final String  stderr;
+        final int     exitCode;
+        final boolean timedOut;
+
+        ExecResult(String stdout, String stderr, int exitCode, boolean timedOut) {
+            this.stdout   = stdout;
+            this.stderr   = stderr;
+            this.exitCode = exitCode;
+            this.timedOut = timedOut;
+        }
+    }
+
+    /**
+     * Run a command inside an already-running container and capture output.
+     * Blocks until the exec finishes or timeoutSeconds elapses.
+     */
+    private ExecResult execWithOutput(String containerId, String[] cmd,
+                                      int timeoutSeconds) throws InterruptedException {
+        ExecCreateCmdResponse exec = dockerClient.execCreateCmd(containerId)
+                .withCmd(cmd)
+                .withAttachStdout(true)
+                .withAttachStderr(true)
+                .withAttachStdin(false)
+                .exec();
+
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+        CountDownLatch latch = new CountDownLatch(1);
+
+        dockerClient.execStartCmd(exec.getId())
+                .exec(new ResultCallback.Adapter<Frame>() {
+                    @Override public void onNext(Frame frame) {
+                        String text = new String(frame.getPayload(), StandardCharsets.UTF_8);
+                        if (frame.getStreamType() == StreamType.STDOUT) stdout.append(text);
+                        else stderr.append(text);
+                    }
+                    @Override public void onComplete() { latch.countDown(); }
+                    @Override public void onError(Throwable t) { latch.countDown(); }
+                });
+
+        boolean finished = latch.await(timeoutSeconds, TimeUnit.SECONDS);
+
+        if (!finished) {
+            // Kill the exec process inside the container.
+            try {
+                execSilent(containerId, new String[]{"sh", "-c",
+                        "kill $(cat /tmp/exec.pid 2>/dev/null) 2>/dev/null; true"});
+            } catch (Exception ignored) {}
+            return new ExecResult(stdout.toString(), stderr.toString(), 124, true);
+        }
+
+        int exitCode = dockerClient.inspectExecCmd(exec.getId()).exec()
+                .getExitCodeLong().intValue();
+
+        return new ExecResult(stdout.toString(), stderr.toString(), exitCode, false);
+    }
+
+    /**
+     * Fire-and-forget exec — used for mkdir, rm, and other housekeeping.
+     * Errors are swallowed deliberately.
+     */
+    private void execSilent(String containerId, String[] cmd) {
+        try {
+            ExecCreateCmdResponse exec = dockerClient.execCreateCmd(containerId)
+                    .withCmd(cmd)
+                    .withAttachStdout(false)
+                    .withAttachStderr(false)
+                    .exec();
+            dockerClient.execStartCmd(exec.getId())
+                    .exec(new ResultCallback.Adapter<>())
+                    .awaitCompletion(5, TimeUnit.SECONDS);
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Write a string into a running container using docker cp (tar stream).
+     *
+     * docker exec + stdin attachment races against stream setup in the Java SDK
+     * and is unreliable for file writes. docker cp is the correct API: it copies
+     * an in-memory tar archive directly into the container filesystem with no
+     * timing dependency.
+     *
+     * @param containerId  target container
+     * @param path         absolute path inside the container (e.g. /workspace/run-x/Main.java)
+     * @param content      file content as a string
+     */
+    private void writeFileToContainer(String containerId, String path,
+                                      String content) throws Exception {
+        byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+
+        // Build a minimal tar archive in memory: one entry for the target file.
+        String   fileName  = path.substring(path.lastIndexOf('/') + 1);
+        String   targetDir = path.substring(0, path.lastIndexOf('/'));
+        byte[]   tarBytes  = buildTar(fileName, contentBytes);
+
+        dockerClient.copyArchiveToContainerCmd(containerId)
+                .withTarInputStream(new ByteArrayInputStream(tarBytes))
+                .withRemotePath(targetDir)
+                .exec();
+    }
+
+    /**
+     * Build a minimal POSIX tar archive in memory containing a single file.
+     * The tar header is 512 bytes; data follows in 512-byte blocks.
+     */
+    private byte[] buildTar(String fileName, byte[] content) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+        // ── 512-byte POSIX ustar header ──────────────────────────────────────
+        byte[] header = new byte[512];
+
+        // File name (bytes 0–99)
+        byte[] nameBytes = fileName.getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(nameBytes, 0, header, 0, Math.min(nameBytes.length, 99));
+
+        // File mode (bytes 100–107): 0000644
+        fillOctal(header, 100, 8, 0644);
+
+        // UID / GID (bytes 108–123): both 0
+        fillOctal(header, 108, 8, 0);
+        fillOctal(header, 116, 8, 0);
+
+        // File size (bytes 124–135): octal
+        fillOctal(header, 124, 12, content.length);
+
+        // Modification time (bytes 136–147): current epoch seconds
+        fillOctal(header, 136, 12, System.currentTimeMillis() / 1000);
+
+        // Type flag (byte 156): '0' = regular file
+        header[156] = '0';
+
+        // UStar magic (bytes 257–262)
+        byte[] magic = "ustar ".getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(magic, 0, header, 257, magic.length);
+
+        // Checksum (bytes 148–155): sum of all header bytes with checksum field as spaces
+        Arrays.fill(header, 148, 156, (byte) ' ');
+        int checksum = 0;
+        for (byte b : header) checksum += (b & 0xFF);
+        fillOctal(header, 148, 8, checksum);
+
+        baos.write(header);
+
+        // ── File content padded to 512-byte blocks ────────────────────────────
+        baos.write(content);
+        int remainder = content.length % 512;
+        if (remainder != 0) {
+            baos.write(new byte[512 - remainder]); // padding
+        }
+
+        // ── Two 512-byte zero blocks mark end-of-archive ──────────────────────
+        baos.write(new byte[1024]);
+
+        return baos.toByteArray();
+    }
+
+    /** Write {@code value} as a zero-padded octal string into {@code buf[offset..offset+len-1]}. */
+    private void fillOctal(byte[] buf, int offset, int len, long value) {
+        String octal = String.format("%0" + (len - 1) + "o", value);
+        byte[] ob = octal.getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(ob, 0, buf, offset, Math.min(ob.length, len - 1));
+        buf[offset + len - 1] = 0; // null-terminate
+    }
+
+    // ── Container creation ────────────────────────────────────────────────────
+
+    /**
+     * Create, configure, and start a new long-running sandbox container.
+     * The entrypoint is `sleep infinity` so the container stays alive
+     * indefinitely and accepts docker exec calls.
+     */
+    private WarmContainer createWarmContainer(Language lang) throws Exception {
+        CreateContainerResponse container = dockerClient.createContainerCmd(lang.getDockerImage())
+                .withCmd("sleep", "infinity")
+                .withHostConfig(HostConfig.newHostConfig()
+                        .withMemory((long) memoryLimitMb * 1024 * 1024)
+                        .withMemorySwap((long) memoryLimitMb * 1024 * 1024)
+                        .withCpuPeriod(100000L)
+                        .withCpuQuota(50000L)
+                        .withNetworkMode("none")
+                        .withReadonlyRootfs(false)
+                        .withPidsLimit(64L)
+                )
+                .withLabels(Map.of(
+                        "managed-by",  "code-execution-engine",
+                        "language",    lang.name()
+                ))
+                .withWorkingDir("/workspace")
+                .exec();
+
+        String id = container.getId();
+        dockerClient.startContainerCmd(id).exec();
+
+        // Ensure the workspace directory exists inside the container.
+        execSilent(id, new String[]{"mkdir", "-p", "/workspace"});
+
+        return new WarmContainer(id, lang);
+    }
+
+    // ── Pool refresh ──────────────────────────────────────────────────────────
+
+    /**
+     * After every exec, check whether this container has hit the run threshold.
+     * If so, schedule an async blue/green replacement: bring up the new container
+     * fully before tearing down the old one so there is zero downtime.
+     */
+    private void maybeScheduleRefresh(Language lang, WarmContainer wc) {
+        int runs = wc.runCount.incrementAndGet();
+        if (runs < REFRESH_AFTER_RUNS) return;
+
+        log.info(String.format("Scheduling container refresh for %s after %d runs", lang.name(), runs));
+
+        refreshExecutor.submit(() -> {
+            WarmContainer fresh = null;
+            try {
+                fresh = createWarmContainer(lang);
+                log.info(String.format("Refresh: new container ready [%s] → %s", lang.name(), fresh.containerId));
+            } catch (Exception e) {
+                log.warning(String.format("Refresh: failed to create new container for %s: %s",
+                        lang.name(), e.getMessage()));
+                return; // keep using the old (potentially dirty) container rather than leaving the slot empty
+            }
+
+            // Atomically swap — submissions in flight on wc will finish normally
+            // because we're only replacing the pool reference; existing WarmContainer
+            // object stays valid until the semaphore is fully released.
+            WarmContainer old = pool.put(lang, fresh);
+
+            // Drain the old container's semaphore before removing it, so any
+            // exec still holding the permit can complete cleanly.
+            if (old != null) {
                 try {
-                    dockerClient.removeContainerCmd(containerId).withForce(true).exec();
-                } catch (Exception ignored) {
+                    old.semaphore.acquire(POOL_CONCURRENCY);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    forceRemoveContainer(old.containerId);
+                    log.info(String.format("Refresh: old container removed [%s] ← %s",
+                            lang.name(), old.containerId));
                 }
             }
-        }
+        });
     }
 
     // ── Image management ──────────────────────────────────────────────────────
@@ -260,34 +510,25 @@ public class CodeExecutionEngine implements ExecutionService {
     private final Set<String> pulledImages = ConcurrentHashMap.newKeySet();
 
     private void pullImageIfNeeded(String image) {
-        if (pulledImages.contains(image)) {
-            return;
-        }
+        if (pulledImages.contains(image)) return;
         try {
             dockerClient.pullImageCmd(image)
                     .exec(new ResultCallback.Adapter<PullResponseItem>() {
-                        @Override
-                        public void onNext(PullResponseItem item) {
-                        }
+                        @Override public void onNext(PullResponseItem item) {}
                     })
                     .awaitCompletion(5, TimeUnit.MINUTES);
             pulledImages.add(image);
         } catch (Exception e) {
-            pulledImages.add(image); // assume it's there
+            pulledImages.add(image); // assume it's present locally
         }
     }
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
+    // ── Utility ───────────────────────────────────────────────────────────────
 
-    private void cleanup(Path workDir) {
-        if (workDir == null) return;
+    private void forceRemoveContainer(String containerId) {
+        if (containerId == null) return;
         try {
-            try (var stream = Files.walk(workDir)) {
-                stream.sorted(Comparator.reverseOrder())
-                        .forEach(p -> {
-                            try { Files.delete(p); } catch (IOException ignored) {}
-                        });
-            }
-        } catch (IOException ignored) {}
+            dockerClient.removeContainerCmd(containerId).withForce(true).exec();
+        } catch (Exception ignored) {}
     }
 }

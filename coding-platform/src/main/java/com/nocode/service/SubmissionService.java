@@ -14,6 +14,7 @@ import com.nocode.repository.UserRepository;
 import com.nocode.repository.ContestProblemRepository;
 import com.nocode.repository.ContestParticipationRepository;
 import com.nocode.entity.Contest;
+import com.nocode.queue.SubmissionQueue;
 import java.time.LocalDateTime;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -30,7 +31,7 @@ public class SubmissionService {
     private final UserRepository userRepository;
     private final ContestProblemRepository contestProblemRepository;
     private final ContestParticipationRepository contestParticipationRepository;
-    private final SubmissionProcessor processor; // separate bean — @Async works correctly
+    private final SubmissionQueue submissionQueue;
 
     // ── Submit ──────────────────────────────────────────────────────────────
 
@@ -75,8 +76,8 @@ public class SubmissionService {
 
         submission = submissionRepository.save(submission);
 
-        // Fires async in judgeExecutor thread pool — returns immediately to caller
-        processor.process(submission.getId());
+        // Add submission to queue
+        submissionQueue.push(submission.getId());
 
         return toResponse(submission);
     }

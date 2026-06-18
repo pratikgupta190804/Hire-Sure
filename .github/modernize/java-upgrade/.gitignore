@@ -1,0 +1,16 @@
+
+# Environment files
+.env
+.env.*
+
+# Frontend
+coding-platform-frontend/node_modules/
+coding-platform-frontend/dist/
+
+# Backend
+coding-platform/.env
+coding-platform/target/
+
+# AI Agents
+agent-service/.env
+agent-service/venv
