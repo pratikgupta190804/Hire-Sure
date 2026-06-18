@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useApi } from "../hooks/useApi";
-import { AGENT, API, LANGUAGES, LANG_STARTERS } from "../utils/constants";
+import { API, LANGUAGES, LANG_STARTERS } from "../utils/constants";
 import Editor from "@monaco-editor/react";
 
 // Helper to base64 encode an ArrayBuffer
@@ -112,7 +112,7 @@ export function VoiceInterview({ navigate }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${AGENT}/agent/resume/extract`, { method: "POST", body: formData });
+      const res = await fetch(`${API}api/agent/resume/extract`, { method: "POST", body: formData });
       if (!res.ok) throw new Error("Resume parse failed");
       const data = await res.json();
       const parsedText = `Skills: ${data.skills?.join(", ")}\nExperience Level: ${data.experience_level}\nSummary: ${data.summary}`;

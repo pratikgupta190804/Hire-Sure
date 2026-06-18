@@ -183,14 +183,22 @@ async def generation_worker() -> None:
 
         try:
             problems = await run_pipeline(request, publish=publish, auth_token=auth_token)
+            preview_ids = []
+            if not publish:
+                for problem in problems:
+                    pid = str(uuid.uuid4())
+                    preview_store[pid] = problem
+                    preview_ids.append(pid)
+
             await _set_task(
                 task_id,
                 "done",
                 problems_generated=len(problems),
+                preview_ids=preview_ids,
                 problems=[p.model_dump() for p in problems],
                 message=f"Generated {len(problems)}/{request.count} problems successfully.",
             )
-            logger.info(f"Task {task_id} done ({len(problems)} problems).")
+            logger.info(f"Task {task_id} done ({len(problems)} problems). Saved previews: {preview_ids}")
         except Exception as exc:
             logger.exception(f"Task {task_id} failed: {exc}")
             await _set_task(task_id, "failed", error=str(exc), message="Pipeline error — see agent logs.")

@@ -1,3 +1,6 @@
+from openpyxl import drawing
+from openpyxl import drawing
+from openpyxl.drawing import spreadsheet_drawing
 import json
 import logging
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -104,6 +107,10 @@ def generator_agent(state: ProblemState) -> ProblemState:
         raw = raw.strip()
         if raw.endswith("```"):
             raw = raw[:-3].strip()
+
+        logger.error("RAW RESPONSE START")
+        logger.error(raw)
+        logger.error("RAW RESPONSE END")
 
         data = json.loads(raw)
         problem = GeneratedProblem(**data)

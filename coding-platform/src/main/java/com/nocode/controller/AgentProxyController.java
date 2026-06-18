@@ -64,6 +64,14 @@ public class AgentProxyController {
         return forwardRequest(url, HttpMethod.POST, requestBody, authHeader);
     }
 
+    @GetMapping("/generate/status/{taskId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> getStatus(@PathVariable String taskId,
+                                                         @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        String url = getFastApiBaseUrl() + "/generate/status/" + taskId;
+        return forwardRequest(url, HttpMethod.GET, null, authHeader);
+    }
+
     @GetMapping("/generate/preview/list")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> listPreviews(@RequestHeader(value = "Authorization", required = false) String authHeader) {

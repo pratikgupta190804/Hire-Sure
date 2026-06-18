@@ -26,7 +26,7 @@ export function AIGeneratorPage() {
   const loadPreviews = useCallback(async () => {
     setLoadingPreviews(true);
     try {
-      const d = await api("/generate/preview/list", {}, AGENT);
+      const d = await api("/api/agent/generate/preview/list", {}, API);
       setPreviews(d.previews || []);
     } catch {
       setPreviews([]);
@@ -39,35 +39,9 @@ export function AIGeneratorPage() {
     loadPreviews();
   }, [loadPreviews]);
 
-  const generate = async (e) => {
-    e.preventDefault();
-    setGenerating(true);
-    try {
-      const body = { ...genForm, count: Number(genForm.count) };
-      if (!body.topic) delete body.topic;
-      if (!body.difficulty) delete body.difficulty;
-      if (!body.company_style) delete body.company_style;
-
-      const d = await api("/generate/preview", {
-        method: "POST",
-        body: body,
-      }, API);
-
-      show(
-        `Generated ${d.problems_generated} problem(s)! Review below.`,
-        "success",
-      );
-      loadPreviews();
-    } catch (e) {
-      show(e.message || "Could not reach agent service", "error");
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   const startEdit = async (previewId) => {
     try {
-      const d = await api("/generate/preview/list", {}, AGENT);
+      const d = await api("/api/agent/generate/preview/list", API);
       const preview = (d.previews || []).find(
         (p) => p.preview_id === previewId,
       );
@@ -82,13 +56,69 @@ export function AIGeneratorPage() {
     }
   };
 
+  const generate = async (e) => {
+    e.preventDefault();
+    setGenerating(true);
+    try {
+      const body = { ...genForm, count: Number(genForm.count) };
+      if (!body.topic) delete body.topic;
+      if (!body.difficulty) delete body.difficulty;
+      if (!body.company_style) delete body.company_style;
+
+      const d = await api("/api/agent/generate/preview", {
+        method: "POST",
+        body: body,
+      });
+
+      if (d && d.task_id) {
+        show("Problem generation queued. Please wait...", "info");
+        let finished = false;
+        let attempts = 0;
+        const maxAttempts = 60; // 2 minutes max
+        while (!finished && attempts < maxAttempts) {
+          attempts++;
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          try {
+            const statusData = await api(`/api/agent/generate/status/${d.task_id}`, API);
+            if (statusData.status === "done") {
+              finished = true;
+              show(`Generated ${statusData.problems_generated} problem(s)! Review below.`, "success");
+              loadPreviews();
+            } else if (statusData.status === "failed") {
+              finished = true;
+              show(statusData.error || "Generation pipeline failed.", "error");
+            } else {
+              console.log(`Polling status: ${statusData.status} (attempt ${attempts})`);
+            }
+          } catch (err) {
+            finished = true;
+            show("Failed to check generation status", "error");
+          }
+        }
+        if (attempts >= maxAttempts) {
+          show("Generation took too long. Check the queue status later.", "warning");
+        }
+      } else {
+        show(
+          `Generated ${d?.problems_generated || 0} problem(s)! Review below.`,
+          "success",
+        );
+        loadPreviews();
+      }
+    } catch (e) {
+      show(e.message || "Could not reach agent service", "error");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const saveEdited = async (previewId) => {
     setSaving(previewId);
     try {
-      await api(`/generate/save/${previewId}`, {
+      await api(`/api/agent/generate/save/${previewId}`, {
         method: "POST",
         body: editForm,
-      }, AGENT);
+      });
       show("Problem saved to database!", "success");
       setEditingId(null);
       setEditForm(null);
@@ -104,9 +134,9 @@ export function AIGeneratorPage() {
     if (!confirm("Discard this problem?")) return;
     setDiscarding(previewId);
     try {
-      await api(`/generate/preview/${previewId}`, {
+      await api(`/api/agent/generate/preview/${previewId}`, {
         method: "DELETE",
-      }, AGENT);
+      });
       show("Problem discarded", "success");
       loadPreviews();
     } catch {
@@ -119,9 +149,9 @@ export function AIGeneratorPage() {
   const saveDirectly = async (previewId) => {
     setSaving(previewId);
     try {
-      await api(`/generate/save/${previewId}`, {
+      await api(`/api/agent/generate/save/${previewId}`, {
         method: "POST",
-      }, AGENT);
+      });
       show("Problem saved to database!", "success");
       loadPreviews();
     } catch (e) {
