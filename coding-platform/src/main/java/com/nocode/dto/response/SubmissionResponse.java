@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 public class SubmissionResponse {
     private String id;
     private String problemId;
+    private String slag;
     private String problemTitle;
     private Integer languageId;
     private SubmissionStatus status;

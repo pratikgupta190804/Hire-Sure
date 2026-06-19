@@ -91,6 +91,7 @@ public class CodeExecutionEngine implements ExecutionService {
         final AtomicInteger runCount = new AtomicInteger(0);
         final Semaphore semaphore = new Semaphore(POOL_CONCURRENCY, true);
         final Language language;
+        volatile boolean needsRefresh = false;
 
         WarmContainer(String containerId, Language language) {
             this.containerId = containerId;
@@ -176,6 +177,164 @@ public class CodeExecutionEngine implements ExecutionService {
         }
     }
 
+    @Override
+    public List<ExecutionResult> executeBatch(String sourceCode, int languageId, List<String> stdins) {
+        Language lang;
+        try {
+            lang = Language.fromId(languageId);
+        } catch (IllegalArgumentException e) {
+            return List.of(ExecutionResult.builder()
+                    .stderr("Unsupported language ID: " + languageId)
+                    .exitCode(1)
+                    .build());
+        }
+
+        WarmContainer wc = pool.computeIfAbsent(lang, l -> {
+            try { return createWarmContainer(l); }
+            catch (Exception ex) { throw new RuntimeException(ex); }
+        });
+
+        // Acquire concurrency permit before touching the container filesystem.
+        try {
+            wc.semaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return List.of(ExecutionResult.builder().stderr("Interrupted waiting for execution slot").exitCode(1).build());
+        }
+
+        try {
+            return executeBatchInWarmContainer(wc, sourceCode, stdins, lang);
+        } finally {
+            wc.semaphore.release();
+            maybeScheduleRefresh(lang, wc);
+        }
+    }
+
+    private List<ExecutionResult> executeBatchInWarmContainer(WarmContainer wc,
+                                                             String sourceCode,
+                                                             List<String> stdins,
+                                                             Language lang) {
+        List<ExecutionResult> results = new ArrayList<>();
+        String runId  = UUID.randomUUID().toString().substring(0, 8);
+        String runDir = "/workspace/run-" + runId;
+        try {
+
+            // 1. Create isolated run directory and write source code.
+            execSilent(wc.containerId, new String[]{"mkdir", "-p", runDir});
+            writeFileToContainer(wc.containerId, runDir + "/" + lang.getFileName(), sourceCode);
+
+            // 2. Compile step (compile EXACTLY ONCE).
+            if (lang.isCompiled()) {
+                String compileCmd = "cd " + runDir + " && " + lang.getCompileCmd();
+                ExecResult compileResult = execWithOutput(
+                        wc.containerId, new String[]{"sh", "-c", compileCmd}, 30);
+
+                if (compileResult.exitCode != 0) {
+                    return List.of(ExecutionResult.builder()
+                            .compileOutput(compileResult.stderr.isEmpty()
+                                    ? compileResult.stdout : compileResult.stderr)
+                            .stderr(compileResult.stderr)
+                            .exitCode(compileResult.exitCode)
+                            .build());
+                }
+            }
+
+            // Java: pre-fetch compilation class bytes so we don't do it inside the loop
+            String javaBase64Bytes = null;
+            if (lang == Language.JAVA) {
+                String classPath = runDir + "/Main.class";
+                ExecResult base64Result = execWithOutput(
+                        wc.containerId, new String[]{"base64", classPath}, 10);
+                if (base64Result.exitCode != 0) {
+                    return List.of(ExecutionResult.builder()
+                            .stderr("Failed to read compiled class: " + base64Result.stderr)
+                            .exitCode(1)
+                            .build());
+                }
+                javaBase64Bytes = base64Result.stdout.trim().replace("\n", "").replace("\r", "");
+            }
+
+            // 3. Sequential run step for each input
+            for (String stdin : stdins) {
+                if (lang == Language.JAVA) {
+                    long startRunMs = System.currentTimeMillis();
+                    ExecutionResult jvmResult = runJvmRunner(wc.containerId, runDir, javaBase64Bytes, stdin, timeLimitSeconds);
+                    long runtimeMs = System.currentTimeMillis() - startRunMs;
+
+                    if (jvmResult.isTimedOut()) {
+                        wc.needsRefresh = true;
+                        results.add(ExecutionResult.builder()
+                                .stdout(jvmResult.getStdout())
+                                .stderr("Time limit exceeded")
+                                .exitCode(124)
+                                .runtimeMs(runtimeMs)
+                                .timedOut(true)
+                                .build());
+                        break;
+                    }
+
+                    results.add(ExecutionResult.builder()
+                            .stdout(jvmResult.getStdout())
+                            .stderr(jvmResult.getStderr())
+                            .exitCode(jvmResult.getExitCode())
+                            .runtimeMs(runtimeMs)
+                            .build());
+
+                    if (jvmResult.getExitCode() != 0) {
+                        break; // Stop running remaining testcases on runtime error
+                    }
+                } else {
+                    writeFileToContainer(wc.containerId, runDir + "/.stdin", stdin != null ? stdin : "");
+
+                    String runCmd = "cd " + runDir + " && " + lang.getRunCmd() + " < .stdin";
+                    long startRunMs = System.currentTimeMillis();
+                    ExecResult runResult = execWithOutput(
+                            wc.containerId, new String[]{"sh", "-c", runCmd}, timeLimitSeconds);
+                    long runtimeMs = System.currentTimeMillis() - startRunMs;
+
+                    if (runResult.timedOut) {
+                        results.add(ExecutionResult.builder()
+                                .stdout(runResult.stdout)
+                                .stderr("Time limit exceeded")
+                                .exitCode(124)
+                                .runtimeMs(runtimeMs)
+                                .timedOut(true)
+                                .build());
+                        break;
+                    }
+
+                    results.add(ExecutionResult.builder()
+                            .stdout(runResult.stdout)
+                            .stderr(runResult.stderr)
+                            .exitCode(runResult.exitCode)
+                            .runtimeMs(runtimeMs)
+                            .build());
+
+                    if (runResult.exitCode != 0) {
+                        break; // Stop running remaining testcases on runtime error
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            results.add(ExecutionResult.builder()
+                    .stderr("Execution error: " + e.getMessage())
+                    .exitCode(1)
+                    .build());
+        } finally {
+            // Asynchronous cleanup of run directory so it doesn't block the critical path
+            final String containerId = wc.containerId;
+            final String targetRunDir = runDir;
+            refreshExecutor.submit(() -> {
+                try {
+                    execSilent(containerId, new String[]{"rm", "-rf", targetRunDir});
+                } catch (Exception ignored) {}
+            });
+        }
+
+        return results;
+    }
+
     // ── Core exec logic ───────────────────────────────────────────────────────
 
     /**
@@ -216,29 +375,64 @@ public class CodeExecutionEngine implements ExecutionService {
                 }
             }
 
-            // 3. Run step — stdin is redirected from the file we wrote above.
-            String runCmd = "cd " + runDir + " && " + lang.getRunCmd() + " < .stdin";
-            ExecResult runResult = execWithOutput(
-                    wc.containerId, new String[]{"sh", "-c", runCmd}, timeLimitSeconds);
+            // 3. Run step.
+            if (lang == Language.JAVA) {
+                String classPath = runDir + "/Main.class";
+                ExecResult base64Result = execWithOutput(
+                        wc.containerId, new String[]{"base64", classPath}, 10);
+                if (base64Result.exitCode != 0) {
+                    return ExecutionResult.builder()
+                            .stderr("Failed to read compiled class: " + base64Result.stderr)
+                            .exitCode(1)
+                            .build();
+                }
+                String base64Bytes = base64Result.stdout.trim().replace("\n", "").replace("\r", "");
 
-            long runtimeMs = System.currentTimeMillis() - startMs;
+                long startRunMs = System.currentTimeMillis();
+                ExecutionResult jvmResult = runJvmRunner(wc.containerId, runDir, base64Bytes, stdin, timeLimitSeconds);
+                long runtimeMs = System.currentTimeMillis() - startRunMs;
 
-            if (runResult.timedOut) {
+                if (jvmResult.isTimedOut()) {
+                    wc.needsRefresh = true;
+                    return ExecutionResult.builder()
+                            .stdout(jvmResult.getStdout())
+                            .stderr("Time limit exceeded")
+                            .exitCode(124)
+                            .runtimeMs(runtimeMs)
+                            .timedOut(true)
+                            .build();
+                }
+
+                return ExecutionResult.builder()
+                        .stdout(jvmResult.getStdout())
+                        .stderr(jvmResult.getStderr())
+                        .exitCode(jvmResult.getExitCode())
+                        .runtimeMs(runtimeMs)
+                        .build();
+            } else {
+                String runCmd = "cd " + runDir + " && " + lang.getRunCmd() + " < .stdin";
+                ExecResult runResult = execWithOutput(
+                        wc.containerId, new String[]{"sh", "-c", runCmd}, timeLimitSeconds);
+
+                long runtimeMs = System.currentTimeMillis() - startMs;
+
+                if (runResult.timedOut) {
+                    return ExecutionResult.builder()
+                            .stdout(runResult.stdout)
+                            .stderr("Time limit exceeded")
+                            .exitCode(124)
+                            .runtimeMs(runtimeMs)
+                            .timedOut(true)
+                            .build();
+                }
+
                 return ExecutionResult.builder()
                         .stdout(runResult.stdout)
-                        .stderr("Time limit exceeded")
-                        .exitCode(124)
+                        .stderr(runResult.stderr)
+                        .exitCode(runResult.exitCode)
                         .runtimeMs(runtimeMs)
-                        .timedOut(true)
                         .build();
             }
-
-            return ExecutionResult.builder()
-                    .stdout(runResult.stdout)
-                    .stderr(runResult.stderr)
-                    .exitCode(runResult.exitCode)
-                    .runtimeMs(runtimeMs)
-                    .build();
 
         } catch (Exception e) {
             return ExecutionResult.builder()
@@ -252,6 +446,47 @@ public class CodeExecutionEngine implements ExecutionService {
                         new String[]{"sh", "-c", "rm -rf /workspace/run-*"});
             } catch (Exception ignored) {}
         }
+    }
+
+    private ExecutionResult runJvmRunner(String containerId, String runDir, String base64Class, String stdin, int timeoutSeconds) {
+        String stdinBase64 = stdin != null ? Base64.getEncoder().encodeToString(stdin.getBytes(StandardCharsets.UTF_8)) : "";
+        String payload = base64Class + "\n" + stdinBase64 + "\n";
+
+        try {
+            writeFileToContainer(containerId, runDir + "/.payload", payload);
+
+            String[] cmd = new String[]{"sh", "-c", "cat /workspace/output.pipe & PID=$!; cat " + runDir + "/.payload > /workspace/input.pipe; wait $PID"};
+            ExecResult runResult = execWithOutput(containerId, cmd, timeoutSeconds);
+
+            if (runResult.timedOut) {
+                return ExecutionResult.builder()
+                        .stderr("Time limit exceeded")
+                        .exitCode(124)
+                        .timedOut(true)
+                        .build();
+            }
+
+            return parseRunnerResponse(runResult.stdout);
+        } catch (Exception e) {
+            return ExecutionResult.builder().stderr("Error communicating with Warm JVM: " + e.getMessage()).exitCode(1).build();
+        }
+    }
+
+    private ExecutionResult parseRunnerResponse(String output) throws Exception {
+        String normalized = output.replace("\r", "");
+        String[] lines = normalized.split("\n", -1);
+        if (lines.length < 3) {
+            throw new IOException("Invalid response from JVM runner: " + output);
+        }
+        int exitCode = Integer.parseInt(lines[0].trim());
+        byte[] stdoutBytes = Base64.getDecoder().decode(lines[1].trim());
+        byte[] stderrBytes = Base64.getDecoder().decode(lines[2].trim());
+
+        return ExecutionResult.builder()
+                .stdout(new String(stdoutBytes, StandardCharsets.UTF_8))
+                .stderr(new String(stderrBytes, StandardCharsets.UTF_8))
+                .exitCode(exitCode)
+                .build();
     }
 
     // ── docker exec helpers ───────────────────────────────────────────────────
@@ -432,9 +667,15 @@ public class CodeExecutionEngine implements ExecutionService {
      * The entrypoint is `sleep infinity` so the container stays alive
      * indefinitely and accepts docker exec calls.
      */
+    private String readResource(String path) throws IOException {
+        try (InputStream in = CodeExecutionEngine.class.getResourceAsStream(path)) {
+            if (in == null) throw new FileNotFoundException("Resource not found: " + path);
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
     private WarmContainer createWarmContainer(Language lang) throws Exception {
-        CreateContainerResponse container = dockerClient.createContainerCmd(lang.getDockerImage())
-                .withCmd("sleep", "infinity")
+        var createCmd = dockerClient.createContainerCmd(lang.getDockerImage())
                 .withHostConfig(HostConfig.newHostConfig()
                         .withMemory((long) memoryLimitMb * 1024 * 1024)
                         .withMemorySwap((long) memoryLimitMb * 1024 * 1024)
@@ -448,10 +689,23 @@ public class CodeExecutionEngine implements ExecutionService {
                         "managed-by",  "code-execution-engine",
                         "language",    lang.name()
                 ))
-                .withWorkingDir("/workspace")
-                .exec();
+                .withWorkingDir("/workspace");
 
+        if (lang == Language.JAVA) {
+            createCmd = createCmd.withCmd("java", "-Djava.security.manager=allow", "/workspace/WarmJvmRunner.java");
+        } else {
+            createCmd = createCmd.withCmd("sleep", "infinity");
+        }
+
+        CreateContainerResponse container = createCmd.exec();
         String id = container.getId();
+
+        if (lang == Language.JAVA) {
+            // Write WarmJvmRunner.java before starting the container
+            String runnerContent = readResource("/WarmJvmRunner.java");
+            writeFileToContainer(id, "/workspace/WarmJvmRunner.java", runnerContent);
+        }
+
         dockerClient.startContainerCmd(id).exec();
 
         // Ensure the workspace directory exists inside the container.
@@ -469,9 +723,9 @@ public class CodeExecutionEngine implements ExecutionService {
      */
     private void maybeScheduleRefresh(Language lang, WarmContainer wc) {
         int runs = wc.runCount.incrementAndGet();
-        if (runs < REFRESH_AFTER_RUNS) return;
+        if (runs < REFRESH_AFTER_RUNS && !wc.needsRefresh) return;
 
-        log.info(String.format("Scheduling container refresh for %s after %d runs", lang.name(), runs));
+        log.info(String.format("Scheduling container refresh for %s after %d runs (needsRefresh=%b)", lang.name(), runs, wc.needsRefresh));
 
         refreshExecutor.submit(() -> {
             WarmContainer fresh = null;

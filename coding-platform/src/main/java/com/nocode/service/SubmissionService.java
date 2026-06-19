@@ -104,6 +104,7 @@ public class SubmissionService {
         return SubmissionResponse.builder()
                 .id(s.getId())
                 .problemId(s.getProblem().getId())
+                .slag(s.getProblem().getSlug())
                 .problemTitle(s.getProblem().getTitle())
                 .languageId(s.getLanguageId())
                 .status(s.getStatus())

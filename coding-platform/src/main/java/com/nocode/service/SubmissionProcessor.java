@@ -54,16 +54,23 @@ public class SubmissionProcessor {
                 return;
             }
 
+            List<String> inputs = testCases.stream().map(TestCase::getInput).toList();
+            List<ExecutionResult> results = executionEngine.executeBatch(
+                    submission.getSourceCode(),
+                    submission.getLanguageId(),
+                    inputs
+            );
+
+            if (results.isEmpty()) {
+                fail(submission, SubmissionStatus.INTERNAL_ERROR, "No execution results returned from runner");
+                return;
+            }
+
             int totalRuntime = 0;
 
-            for (int i = 0; i < testCases.size(); i++) {
+            for (int i = 0; i < results.size(); i++) {
+                ExecutionResult result = results.get(i);
                 TestCase tc = testCases.get(i);
-                
-                ExecutionResult result = executionEngine.execute(
-                        submission.getSourceCode(),
-                        submission.getLanguageId(),
-                        tc.getInput()
-                );
 
                 totalRuntime += (int) result.getRuntimeMs();
 
@@ -113,6 +120,11 @@ public class SubmissionProcessor {
                     submissionRepository.save(submission);
                     return;
                 }
+            }
+
+            if (results.size() < testCases.size()) {
+                fail(submission, SubmissionStatus.INTERNAL_ERROR, "Execution stopped prematurely without error details");
+                return;
             }
 
             // All passed

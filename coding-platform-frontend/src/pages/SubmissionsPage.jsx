@@ -43,7 +43,7 @@ export function SubmissionsPage({ navigate }) {
             </thead>
             <tbody>
               {subs.map((s) => (
-                <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/problems/${s.problemId}`)}>
+                <tr key={s.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/problems/${s.slag}`)}>
                   <td style={{ fontWeight: 500 }}>{s.problemTitle}</td>
                   <td>
                     <span className="tag">{LANGUAGES.find((l) => l.id === s.languageId)?.name || s.languageId}</span>
