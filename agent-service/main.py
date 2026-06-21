@@ -228,7 +228,9 @@ async def lifespan(app: FastAPI):
     global redis
 
     # Connect to Redis.
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise ValueError("REDIS_URL environment variable is not defined. Please set it in your environment or .env file.")
     redis = aioredis.from_url(redis_url, decode_responses=True)
     await redis.ping()
     logger.info(f"Connected to Redis at {redis_url}")
@@ -595,4 +597,4 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("AGENT_PORT", 8001)), reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("AGENT_PORT", 8001)), reload=False)

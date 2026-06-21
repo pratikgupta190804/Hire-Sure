@@ -17,18 +17,26 @@ SPRING_URL = os.getenv("SPRING_BOOT_URL", "http://localhost:8080")
 GEMINI_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-latest"
 
 # Redis initialization with fallback to in-memory dict
-redis_host = os.getenv("REDIS_HOST", "localhost")
-redis_port = int(os.getenv("REDIS_PORT", 6379))
-redis_password = os.getenv("REDIS_PASSWORD", None)
+redis_url = os.getenv("REDIS_URL")
 
 try:
-    redis_client = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
-        decode_responses=True,
-        socket_timeout=2
-    )
+    if redis_url:
+        redis_client = redis.Redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_timeout=2
+        )
+    else:
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = int(os.getenv("REDIS_PORT", 6379))
+        redis_password = os.getenv("REDIS_PASSWORD", None)
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            password=redis_password,
+            decode_responses=True,
+            socket_timeout=2
+        )
     # Test connection
     redis_client.ping()
     logger.info("✓ Connected to Redis for interview session storage.")
