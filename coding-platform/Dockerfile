@@ -1,23 +1,25 @@
-FROM eclipse-temurin:21-jdk-alpine
+# Build stage
+FROM maven:3.9.6-eclipse-temurin-21-alpine AS build
+WORKDIR /app
 
-WORKDIR /runner
+# Copy Maven configuration and resolve dependencies
+COPY pom.xml .
+COPY .mvn .mvn
+COPY mvnw .
+COPY mvnw.cmd .
+RUN chmod +x mvnw
+RUN ./mvnw dependency:go-offline -B
 
-# Copy and compile the dispatcher
-COPY WarmJvmRunner.java .
-RUN javac -J-Xms8m -J-Xmx32m WarmJvmRunner.java
+# Copy source code and package application
+COPY src ./src
+RUN ./mvnw clean package -DskipTests
 
-# Generate Class Data Sharing archive so JVM boots in ~150ms instead of ~800ms
-RUN java -Xshare:dump 2>/dev/null || true
-RUN java -XX:ArchiveClassesAtExit=/runner/runner.jsa \
-         -cp /runner WarmJvmRunner < /dev/null 2>/dev/null || true
+# Run stage
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
 
-WORKDIR /workspace
+# Expose port 8080
+EXPOSE 8080
 
-# Dispatcher entrypoint: persistent, never exits
-ENTRYPOINT ["java", \
-  "-Xshare:on", \
-  "-XX:SharedArchiveFile=/runner/runner.jsa", \
-  "-Xms32m", "-Xmx256m", \
-  "-XX:TieredStopAtLevel=1", \
-  "-cp", "/runner:/workspace", \
-  "WarmJvmRunner"]
+ENTRYPOINT ["java", "-jar", "app.jar"]

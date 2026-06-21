@@ -22,7 +22,7 @@ public class FastApiWebSocketProxy extends TextWebSocketHandler {
 
     private final JwtUtil jwtUtil;
 
-    @Value("${AGENT_SERVICE_URL:http://localhost:8001/api}")
+    @Value("${app.agent-service.url}")
     private String agentServiceUrl;
 
     private final Map<WebSocketSession, WebSocketSession> clientToAgentSessions = new ConcurrentHashMap<>();
@@ -35,11 +35,11 @@ public class FastApiWebSocketProxy extends TextWebSocketHandler {
         } else if (base.startsWith("https://")) {
             base = "wss://" + base.substring(8);
         }
-        
+
         if (base.endsWith("/")) {
             base = base.substring(0, base.length() - 1);
         }
-        
+
         if (!base.endsWith("/interview/ws") && !base.endsWith("/api/interview/ws")) {
             if (base.endsWith("/api")) {
                 base = base + "/interview/ws";
@@ -74,13 +74,14 @@ public class FastApiWebSocketProxy extends TextWebSocketHandler {
         log.info("Proxying client WS session {} to FastAPI: {}", clientSession.getId(), targetWsUrl);
 
         StandardWebSocketClient webSocketClient = new StandardWebSocketClient();
-        
+
         WebSocketHandler agentHandler = new TextWebSocketHandler() {
             @Override
             public void afterConnectionEstablished(WebSocketSession agentSession) {
                 clientToAgentSessions.put(clientSession, agentSession);
                 agentToClientSessions.put(agentSession, clientSession);
-                log.info("Established proxy tunnel for client {} to agent {}", clientSession.getId(), agentSession.getId());
+                log.info("Established proxy tunnel for client {} to agent {}", clientSession.getId(),
+                        agentSession.getId());
             }
 
             @Override

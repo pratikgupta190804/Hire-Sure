@@ -30,8 +30,15 @@ public class ResumeService {
     private final ResumeRepository resumeRepository;
     private final UserRepository userRepository;
 
-    @Value("${app.agent-service.url:http://localhost:8001}")
+    @Value("${app.agent-service.url}")
     private String agentServiceUrl;
+
+    private String getFastApiBaseUrl() {
+        if (agentServiceUrl.endsWith("/api")) {
+            return agentServiceUrl.substring(0, agentServiceUrl.length() - 4);
+        }
+        return agentServiceUrl;
+    }
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -54,7 +61,7 @@ public class ResumeService {
         body.add("file", fileResource);
 
         HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
-        String url = agentServiceUrl + "/agent/resume/extract";
+        String url = getFastApiBaseUrl() + "/agent/resume/extract";
 
         logger.info("Sending resume file to agent service at: {}", url);
         ResponseEntity<ResumeResponse> response = restTemplate.postForEntity(url, requestEntity, ResumeResponse.class);
@@ -72,7 +79,8 @@ public class ResumeService {
         resume.setSummary(extracted.getSummary());
         resume.setExperienceLevel(extracted.getExperienceLevel());
         resume.setSkills(extracted.getSkills() != null ? extracted.getSkills() : new ArrayList<>());
-        resume.setPreferredRoles(extracted.getPreferredRoles() != null ? extracted.getPreferredRoles() : new ArrayList<>());
+        resume.setPreferredRoles(
+                extracted.getPreferredRoles() != null ? extracted.getPreferredRoles() : new ArrayList<>());
 
         resumeRepository.save(resume);
 
@@ -128,7 +136,7 @@ public class ResumeService {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-        String url = agentServiceUrl + "/agent/jobs/match";
+        String url = getFastApiBaseUrl() + "/agent/jobs/match";
 
         logger.info("Requesting job matches from agent service for user ID {} at: {}", userId, url);
         ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);

@@ -17,7 +17,7 @@ import java.util.Map;
 @RequestMapping("/api/agent")
 public class AgentProxyController {
 
-    @Value("${AGENT_SERVICE_URL:http://localhost:8001/api}")
+    @Value("${app.agent-service.url}")
     private String agentServiceUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
@@ -31,7 +31,8 @@ public class AgentProxyController {
 
     @PostMapping("/resume/extract")
     @PreAuthorize("isAuthenticated()")
-    public ResponseEntity<Map<String, Object>> extractResume(@RequestParam("file") MultipartFile file) throws IOException {
+    public ResponseEntity<Map<String, Object>> extractResume(@RequestParam("file") MultipartFile file)
+            throws IOException {
         String url = getFastApiBaseUrl() + "/agent/resume/extract";
 
         HttpHeaders headers = new HttpHeaders();
@@ -59,7 +60,7 @@ public class AgentProxyController {
     @PostMapping("/generate/preview")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> generatePreview(@RequestBody Map<String, Object> requestBody,
-                                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         String url = getFastApiBaseUrl() + "/generate/preview";
         return forwardRequest(url, HttpMethod.POST, requestBody, authHeader);
     }
@@ -67,14 +68,15 @@ public class AgentProxyController {
     @GetMapping("/generate/status/{taskId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> getStatus(@PathVariable String taskId,
-                                                         @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         String url = getFastApiBaseUrl() + "/generate/status/" + taskId;
         return forwardRequest(url, HttpMethod.GET, null, authHeader);
     }
 
     @GetMapping("/generate/preview/list")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Map<String, Object>> listPreviews(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+    public ResponseEntity<Map<String, Object>> listPreviews(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         String url = getFastApiBaseUrl() + "/generate/preview/list";
         return forwardRequest(url, HttpMethod.GET, null, authHeader);
     }
@@ -82,8 +84,8 @@ public class AgentProxyController {
     @PostMapping("/generate/save/{previewId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> savePreview(@PathVariable String previewId,
-                                                           @RequestBody(required = false) Map<String, Object> requestBody,
-                                                           @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestBody(required = false) Map<String, Object> requestBody,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         String url = getFastApiBaseUrl() + "/generate/save/" + previewId;
         return forwardRequest(url, HttpMethod.POST, requestBody, authHeader);
     }
@@ -91,12 +93,13 @@ public class AgentProxyController {
     @DeleteMapping("/generate/preview/{previewId}")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> discardPreview(@PathVariable String previewId,
-                                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         String url = getFastApiBaseUrl() + "/generate/preview/" + previewId;
         return forwardRequest(url, HttpMethod.DELETE, null, authHeader);
     }
 
-    private ResponseEntity<Map<String, Object>> forwardRequest(String url, HttpMethod method, Object body, String authHeader) {
+    private ResponseEntity<Map<String, Object>> forwardRequest(String url, HttpMethod method, Object body,
+            String authHeader) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         if (authHeader != null) {

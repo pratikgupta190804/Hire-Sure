@@ -63,6 +63,7 @@ public class Problem {
     @Column(columnDefinition = "TEXT")
     private String topicTags;
 
+    @Builder.Default
     @Column(nullable = false, columnDefinition = "boolean default false")
     private boolean isContestOnly = false;
 
